@@ -8,7 +8,7 @@
 #include "ops/linear_add/fp8/fp8_linear_add_plan.h"
 #include "ops/linear_add/nvfp4/nvfp4_linear_add_plan.h"
 #include "ops/linear_add/q5/q5_linear_add_plan.h"
-#include "ops/linear_add/w8/w8_linear_add_plan.h"
+#include "ops/linear_add/q8/q8_linear_add_plan.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -26,26 +26,26 @@ void require_tensor(const Tensor& t, DType dtype, std::int32_t n0, std::int32_t 
 }
 
 void require_q5(const Weight& w) {
-    if (w.qtype != QType::Q5G64_F16S || w.layout != QuantLayout::RowSplit ||
+    if (w.qtype != QType::Q5_G64_FP16 || w.layout != QuantLayout::RowSplit ||
         w.scale_dtype != DType::FP16 || w.group_size != 64 || w.group != 64 ||
         w.padded_shape[0] != w.n || w.padded_shape[1] != w.k || w.qdata == nullptr ||
         w.qhigh == nullptr || w.scales == nullptr) {
-        throw std::invalid_argument("linear_add: weight must be Q5G64_F16S row-split");
+        throw std::invalid_argument("linear_add: weight must be Q5_G64_FP16 row-split");
     }
 }
 
-void require_w8(const Weight& w) {
-    if (w.qtype != QType::W8G32_F16S || w.layout != QuantLayout::RowSplit ||
+void require_q8(const Weight& w) {
+    if (w.qtype != QType::Q8_G32_FP16 || w.layout != QuantLayout::RowSplit ||
         w.scale_dtype != DType::FP16 || w.group_size != 32 || w.group != 32 ||
         w.padded_shape[0] != w.n || w.padded_shape[1] != w.k || w.qdata == nullptr ||
         w.qhigh != nullptr || w.scales == nullptr) {
-        throw std::invalid_argument("linear_add: weight must be W8G32_F16S row-split");
+        throw std::invalid_argument("linear_add: weight must be Q8_G32_FP16 row-split");
     }
 }
 
 void require_bf16(const Weight& w) {
-    if (w.qtype != QType::BF16_CTRL || w.layout != QuantLayout::Contiguous || w.qdata == nullptr) {
-        throw std::invalid_argument("linear_add: weight must be contiguous BF16_CTRL");
+    if (w.qtype != QType::BF16 || w.layout != QuantLayout::Contiguous || w.qdata == nullptr) {
+        throw std::invalid_argument("linear_add: weight must be contiguous BF16");
     }
 }
 
@@ -85,7 +85,7 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
     if (min_tokens <= 0 || max_tokens < min_tokens) {
         throw std::invalid_argument("linear_add workspace: invalid token interval");
     }
-    if (qtype == QType::BF16_CTRL) {
+    if (qtype == QType::BF16) {
         if (policy != LinearPolicy::A16Only) {
             throw std::invalid_argument("linear_add workspace: BF16 admits only A16");
         }
@@ -93,15 +93,15 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
         (void)detail::bf16_linear_add_select(output_rows, input_rows, max_tokens);
         return 0;
     }
-    if (qtype == QType::W8G32_F16S) {
+    if (qtype == QType::Q8_G32_FP16) {
         if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("linear_add workspace: W8 admits only A16");
+            throw std::invalid_argument("linear_add workspace: Q8 admits only A16");
         }
-        (void)detail::w8_linear_add_resolve_plan({output_rows, input_rows, input_rows, min_tokens});
-        (void)detail::w8_linear_add_resolve_plan({output_rows, input_rows, input_rows, max_tokens});
+        (void)detail::q8_linear_add_resolve_plan({output_rows, input_rows, input_rows, min_tokens});
+        (void)detail::q8_linear_add_resolve_plan({output_rows, input_rows, input_rows, max_tokens});
         return 0;
     }
-    if (qtype == QType::Q5G64_F16S) {
+    if (qtype == QType::Q5_G64_FP16) {
         if (policy != LinearPolicy::A16Only) {
             throw std::invalid_argument("linear_add workspace: Q5 admits only A16");
         }
@@ -119,7 +119,7 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
         return detail::nvfp4_linear_add_workspace_capacity_bytes(output_rows, input_rows, policy,
                                                                  min_tokens, max_tokens);
     }
-    if (qtype == QType::FP8_E4M3FN_ROW_BF16S) {
+    if (qtype == QType::FP8_E4M3FN_ROW_BF16) {
         const bool supported = (output_rows == detail::Fp8Residual6144Geometry::kOutputRows &&
                                 input_rows == detail::Fp8Residual6144Geometry::kInputRows) ||
                                (output_rows == detail::Fp8Residual17408Geometry::kOutputRows &&
@@ -149,7 +149,7 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
         throw std::invalid_argument("linear_add: x and residual_out must not overlap");
     }
 
-    if (w.qtype == QType::BF16_CTRL) {
+    if (w.qtype == QType::BF16) {
         if (policy != LinearPolicy::A16Only) {
             throw std::invalid_argument("BF16 linear_add admits only A16");
         }
@@ -167,7 +167,7 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
         return;
     }
 
-    if (w.qtype == QType::Q5G64_F16S) {
+    if (w.qtype == QType::Q5_G64_FP16) {
         if (policy != LinearPolicy::A16Only) {
             throw std::invalid_argument("Q5 linear_add admits only A16");
         }
@@ -183,21 +183,21 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
         return;
     }
 
-    if (w.qtype == QType::W8G32_F16S) {
+    if (w.qtype == QType::Q8_G32_FP16) {
         if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("W8 linear_add admits only A16");
+            throw std::invalid_argument("Q8 linear_add admits only A16");
         }
-        require_w8(w);
+        require_q8(w);
         if (w.n != 2048 || (w.k != 4096 && w.k != 6144)) {
-            throw std::invalid_argument("linear_add: unsupported W8 shape");
+            throw std::invalid_argument("linear_add: unsupported Q8 shape");
         }
         if (!aligned_to(x.data, 16) || !aligned_to(residual_out.data, 16) ||
             !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16)) {
             throw std::invalid_argument(
-                "linear_add: W8 requires 16-byte x/residual/code/scale alignment");
+                "linear_add: Q8 requires 16-byte x/residual/code/scale alignment");
         }
         (void)ws;
-        detail::w8_linear_add_dispatch(x, w, residual_out, stream);
+        detail::q8_linear_add_dispatch(x, w, residual_out, stream);
         return;
     }
 
@@ -220,7 +220,7 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
         return;
     }
 
-    if (w.qtype == QType::FP8_E4M3FN_ROW_BF16S) {
+    if (w.qtype == QType::FP8_E4M3FN_ROW_BF16) {
         if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
             throw std::invalid_argument("FP8 linear_add admits only A16 or A8");
         }

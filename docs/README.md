@@ -39,11 +39,26 @@ The active references under [`maintainer/`](maintainer/) record current architec
 artifact, and maintenance contracts. These files are not additional user workflows or installed
 API documentation.
 
-The agreed [model configuration, weight binding, and execution target architecture](maintainer/model-weight-execution.md)
-defines the intended model/artifact/Op boundaries, converter responsibilities, runtime support
-checks, and end-to-end design examples. It is a design contract, not a claim of implemented
-container or runtime support, and contains no migration plan. The references below continue to
-describe the delivered implementation.
+The [model and weight decoupling charter](maintainer/model-weight-execution.md) starts from the
+refactor's acceptance goal, maps responsibilities across conversion, artifacts, binding, execution,
+resources, and product integration, and connects them with diagrams and end-to-end examples.
+It preserves the agreed architectural constraints and guides further module design. Sharding and
+custom chat templates are topics for that detailed design. This target charter does not claim
+implemented container/runtime support or prescribe migration work packages.
+
+The target [model contracts](maintainer/model-contracts.md) define common responsibilities for
+fixed model code, a small set of instance parameters, and physical weight bindings. Extension
+examples use Qwen4Exp and DeepSeek V4.1. The [Qwen3.5 contract](maintainer/qwen3_5-model-contracts.md)
+separates fixed mathematics and derived values from persisted fields, with concrete Dense/MoE
+parameters, optional components, and checked instances.
+Both are target specification drafts; the current v2 container spec remains the delivered reference.
+
+The temporary [refactor execution plan](maintainer/2026-09-13-model-weight-refactor-execution-plan.md)
+defines the stages and shared execution requirements. The
+[first-stage delivery record](maintainer/2026-09-13-model-weight-refactor-phase-1.md) records the
+completed converter, v3 production, format renaming, offline upgrades, and validation. C++ v3 loading
+and Engine integration remain for later stages, whose detailed plans follow their predecessors.
+The references below describe the existing Engine and Op implementation.
 
 Runtime and Op references:
 

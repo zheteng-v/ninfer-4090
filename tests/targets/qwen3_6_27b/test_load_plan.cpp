@@ -87,8 +87,8 @@ int verify_groupwise(const std::filesystem::path& path) {
         std::cerr << "groupwise materialization plan is incomplete\n";
         return 1;
     }
-    if (plan.bindings.token_embedding.format != NumericFormat::Q6G64_F16S ||
-        plan.bindings.output_head.format != NumericFormat::Q6G64_F16S) {
+    if (plan.bindings.token_embedding.format != NumericFormat::Q6_G64_FP16 ||
+        plan.bindings.output_head.format != NumericFormat::Q6_G64_FP16) {
         std::cerr << "groupwise vocabulary endpoints have the wrong storage profile\n";
         return 1;
     }
@@ -103,8 +103,8 @@ int verify_groupwise(const std::filesystem::path& path) {
             std::cerr << "groupwise GDN parent boundary changed\n";
             return 1;
         }
-        if (layer.mlp.gate_up.format != NumericFormat::Q4G64_F16S ||
-            layer.mlp.down.format != NumericFormat::Q5G64_F16S) {
+        if (layer.mlp.gate_up.format != NumericFormat::Q4_G64_FP16 ||
+            layer.mlp.down.format != NumericFormat::Q5_G64_FP16) {
             std::cerr << "groupwise MLP storage profile changed\n";
             return 1;
         }
@@ -134,8 +134,8 @@ int verify_nvfp4(const std::filesystem::path& path) {
                   << " host=" << plan.materialization.host_objects.size() << '\n';
         return 1;
     }
-    if (plan.bindings.token_embedding.format != NumericFormat::W8G32_F16S ||
-        plan.bindings.output_head.format != NumericFormat::W8G32_F16S) {
+    if (plan.bindings.token_embedding.format != NumericFormat::Q8_G32_FP16 ||
+        plan.bindings.output_head.format != NumericFormat::Q8_G32_FP16) {
         std::cerr << "NVFP4 vocabulary endpoints have the wrong storage profile\n";
         return 1;
     }
@@ -340,8 +340,8 @@ int main() {
         artifact_path("NINFER_QWEN3_8_27B_NVFP4_OLD_WEIGHTS", "qwen3_8_27b_nvfp4_old.ninfer");
     const std::filesystem::path qwen38_groupwise_dflash2 =
         artifact_path("NINFER_QWEN3_8_27B_DFLASH2_WEIGHTS", "qwen3_8_27b.ninfer");
-    const std::filesystem::path qwen38_nvfp4_dflash2 = artifact_path(
-        "NINFER_QWEN3_8_27B_NVFP4_DFLASH2_WEIGHTS", "qwen3_8_27b_nvfp4.ninfer");
+    const std::filesystem::path qwen38_nvfp4_dflash2 =
+        artifact_path("NINFER_QWEN3_8_27B_NVFP4_DFLASH2_WEIGHTS", "qwen3_8_27b_nvfp4.ninfer");
     if (!std::filesystem::is_regular_file(groupwise) || !std::filesystem::is_regular_file(nvfp4)) {
         std::cerr << "skip: both real 27B artifacts are required: groupwise=" << groupwise
                   << " nvfp4=" << nvfp4 << '\n';

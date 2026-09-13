@@ -143,7 +143,7 @@ struct Fixture {
                                         kLaneCapacity * sizeof(std::uint16_t);
         for (int layer = 0; layer < kLayers; ++layer) {
             parents[static_cast<std::size_t>(layer)] =
-                bench::make_row_split_weight(QType::W8G32_F16S, kParentRows, kHidden, kHidden,
+                bench::make_row_split_weight(QType::Q8_G32_FP16, kParentRows, kHidden, kHidden,
                                              {static_cast<std::uint8_t>(0x31 + layer), 0, 0x2800});
             norms[static_cast<std::size_t>(layer)]   = bench::make_bf16(kHeadDim);
             cache_k[static_cast<std::size_t>(layer)] = DeviceBuffer(cache_bytes);

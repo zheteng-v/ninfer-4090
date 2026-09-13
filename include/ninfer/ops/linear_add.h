@@ -36,10 +36,10 @@ namespace ninfer::ops {
  *   ideal[:,t] = residual[:,t] + Linear(x,w)[:,t].
  *
  * Logical shapes:
- *   Contiguous BF16 x [K,T] and residual [N,T]. Registered weights are Q5G64_F16S RowSplit
- *   [5120,17408] or [5120,6144], W8G32_F16S RowSplit [2048,4096] or [2048,6144], NVFP4
+ *   Contiguous BF16 x [K,T] and residual [N,T]. Registered weights are Q5_G64_FP16 RowSplit
+ *   [5120,17408] or [5120,6144], Q8_G32_FP16 RowSplit [2048,4096] or [2048,6144], NVFP4
  *   BlockScaleK16M128x4 [5120,6144] or [5120,17408], row-scaled
- *   FP8_E4M3FN_ROW_BF16S [5120,6144] or [5120,17408], or BF16_CTRL Contiguous [5120,6144]. T may
+ *   FP8_E4M3FN_ROW_BF16 [5120,6144] or [5120,17408], or BF16 Contiguous [5120,6144]. T may
  *   be any positive value.
  *
  * Numeric:
@@ -52,7 +52,7 @@ namespace ninfer::ops {
  *   rounding boundaries.
  *
  * Compute policy:
- *   Q5, W8, and BF16_CTRL admit only A16Only. NVFP4 admits A16Only and AllowA4. Row-scaled FP8
+ *   Q5, Q8, and BF16 admit only A16Only. NVFP4 admits A16Only and AllowA4. Row-scaled FP8
  *   admits A16Only and AllowA8. Each registration owns its production plan. A permissive policy
  *   allows the private resolver to select either qualified
  *   arithmetic profile; it does not itself prescribe a kernel.

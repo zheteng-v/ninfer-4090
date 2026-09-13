@@ -544,7 +544,7 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                         prepare();
                         matrix(layout, DType::BF16, DFlashConfig::intermediate, tokens);
                         scratch(layout, ops::linear_swiglu_workspace_capacity_bytes(
-                                            QType::W8G32_F16S, 2 * DFlashConfig::intermediate,
+                                            QType::Q8_G32_FP16, 2 * DFlashConfig::intermediate,
                                             DFlashConfig::hidden, tokens, tokens));
                         scratch(layout,
                                 ops::linear_dynamic_grouped_conv_add_workspace_capacity_bytes(
@@ -555,11 +555,11 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                     matrix(layout, DType::FP32, 16, mask_columns);
                     if (plan.proposal_head == ProposalHead::Optimized) {
                         scratch(layout, ops::linear_topk_workspace_capacity_bytes(
-                                            QType::Q4G64_F16S, Variant::draft_head_rows,
+                                            QType::Q4_G64_FP16, Variant::draft_head_rows,
                                             DFlashConfig::hidden, mask_columns, mask_columns));
                     } else {
-                        // The registered full heads are W8 and FP8; both use the same public input.
-                        for (const auto qtype : {QType::W8G32_F16S, QType::FP8_E4M3FN_ROW_BF16S}) {
+                        // The registered full heads are Q8 and FP8; both use the same public input.
+                        for (const auto qtype : {QType::Q8_G32_FP16, QType::FP8_E4M3FN_ROW_BF16}) {
                             scratch(layout, ops::linear_topk_workspace_capacity_bytes(
                                                 qtype, TextConfig::output_rows,
                                                 DFlashConfig::hidden, mask_columns, mask_columns));
@@ -584,17 +584,17 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                                           DFlashConfig::kv_heads},
                                          {0, plan.capacity}, width, width, batch)));
                     scratch(layout, ops::linear_add_workspace_capacity_bytes(
-                                        QType::W8G32_F16S, DFlashConfig::hidden,
+                                        QType::Q8_G32_FP16, DFlashConfig::hidden,
                                         DFlashConfig::query_size, tokens, tokens));
                 }
                 {
                     auto mlp = layout.scope();
                     (void)workspace_recipe::dflash_mlp<DFlashConfig>(layout, tokens);
                     scratch(layout, ops::linear_swiglu_workspace_capacity_bytes(
-                                        QType::W8G32_F16S, 2 * DFlashConfig::intermediate,
+                                        QType::Q8_G32_FP16, 2 * DFlashConfig::intermediate,
                                         DFlashConfig::hidden, tokens, tokens));
                     scratch(layout, ops::linear_add_workspace_capacity_bytes(
-                                        QType::W8G32_F16S, DFlashConfig::hidden,
+                                        QType::Q8_G32_FP16, DFlashConfig::hidden,
                                         DFlashConfig::intermediate, tokens, tokens));
                 }
                 matrix(layout, DType::BF16, DFlashConfig::hidden, drafts * batch);

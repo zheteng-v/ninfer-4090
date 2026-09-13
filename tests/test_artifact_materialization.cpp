@@ -42,28 +42,28 @@ ninfer::test::artifact_fixture::TemporaryArtifact write_fixture() {
             {"objects", Json::array({
                             {{"name", "frontend/test.json"},
                              {"kind", "resource"},
-                             {"encoding", "raw-bytes-v1"},
+                             {"encoding", "raw_bytes_v1"},
                              {"offset", 0},
                              {"bytes", 3}},
                             {{"name", "weights/test"},
                              {"kind", "tensor"},
                              {"shape", {2}},
                              {"format", "BF16"},
-                             {"layout", "contiguous-le-v1"},
+                             {"layout", "contiguous_le_v1"},
                              {"offset", 256},
                              {"bytes", 4}},
                             {{"name", "weights/second"},
                              {"kind", "tensor"},
                              {"shape", {4}},
                              {"format", "BF16"},
-                             {"layout", "contiguous-le-v1"},
+                             {"layout", "contiguous_le_v1"},
                              {"offset", 8192},
                              {"bytes", 8}},
                             {{"name", "weights/fp8"},
                              {"kind", "tensor"},
                              {"shape", {2, 4}},
-                             {"format", "FP8_E4M3FN_ROW_BF16S"},
-                             {"layout", "row-scale-v1"},
+                             {"format", "fp8_e4m3fn_row_bf16"},
+                             {"layout", "row_scale_v1"},
                              {"offset", 8448},
                              {"bytes", kFp8TensorBytes}},
                         })},
@@ -101,7 +101,7 @@ int main() {
         validation_binder.materialize_on_device(retained_tensor);
         constexpr std::array<std::uint64_t, 2> fp8_shape = {2, 4};
         const auto validated_fp8                         = validation_binder.require_tensor(
-            "weights/fp8", ninfer::artifact::NumericFormat::FP8_E4M3FN_ROW_BF16S,
+            "weights/fp8", ninfer::artifact::NumericFormat::FP8_E4M3FN_ROW_BF16,
             ninfer::artifact::StorageLayout::RowScaleV1, fp8_shape);
         validation_binder.validate_only(validated_fp8);
         const auto validation_plan = validation_binder.finish();
@@ -142,7 +142,7 @@ int main() {
         binder.materialize_on_device(tensor);
 
         const auto fp8 = binder.require_tensor(
-            "weights/fp8", ninfer::artifact::NumericFormat::FP8_E4M3FN_ROW_BF16S,
+            "weights/fp8", ninfer::artifact::NumericFormat::FP8_E4M3FN_ROW_BF16,
             ninfer::artifact::StorageLayout::RowScaleV1, fp8_shape);
         binder.materialize_on_device(fp8);
 
@@ -171,8 +171,8 @@ int main() {
                 "FP8 device tensor payload differs from the artifact");
 
         const ninfer::Weight fp8_weight = ninfer::artifact::materialized_weight(
-            materialized, fp8, ninfer::artifact::NumericFormat::FP8_E4M3FN_ROW_BF16S, 2, 4);
-        require(fp8_weight.qtype == ninfer::QType::FP8_E4M3FN_ROW_BF16S &&
+            materialized, fp8, ninfer::artifact::NumericFormat::FP8_E4M3FN_ROW_BF16, 2, 4);
+        require(fp8_weight.qtype == ninfer::QType::FP8_E4M3FN_ROW_BF16 &&
                     fp8_weight.layout == ninfer::QuantLayout::RowScale &&
                     fp8_weight.scale_dtype == ninfer::DType::BF16 && fp8_weight.n == 2 &&
                     fp8_weight.k == 4 && fp8_weight.group == 4 && fp8_weight.group_size == 4 &&

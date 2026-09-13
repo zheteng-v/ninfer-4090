@@ -14,16 +14,16 @@ StorageLayout storage_layout_for(NumericFormat format) {
     switch (format) {
     case NumericFormat::BF16:
     case NumericFormat::FP32:
-    case NumericFormat::I32:
+    case NumericFormat::INT32:
         return StorageLayout::ContiguousLeV1;
-    case NumericFormat::Q4G64_F16S:
-    case NumericFormat::Q5G64_F16S:
-    case NumericFormat::Q6G64_F16S:
-    case NumericFormat::W8G32_F16S:
+    case NumericFormat::Q4_G64_FP16:
+    case NumericFormat::Q5_G64_FP16:
+    case NumericFormat::Q6_G64_FP16:
+    case NumericFormat::Q8_G32_FP16:
         return StorageLayout::RowSplitK128V1;
     case NumericFormat::NVFP4:
         return StorageLayout::BlockScaleK16M128x4V1;
-    case NumericFormat::FP8_E4M3FN_ROW_BF16S:
+    case NumericFormat::FP8_E4M3FN_ROW_BF16:
         return StorageLayout::RowScaleV1;
     }
     throw std::logic_error("unhandled numeric format");
@@ -32,23 +32,23 @@ StorageLayout storage_layout_for(NumericFormat format) {
 QType qtype_for(NumericFormat format) {
     switch (format) {
     case NumericFormat::BF16:
-        return QType::BF16_CTRL;
+        return QType::BF16;
     case NumericFormat::FP32:
-        return QType::FP32_CTRL;
-    case NumericFormat::I32:
-        return QType::I32_CTRL;
-    case NumericFormat::Q4G64_F16S:
-        return QType::Q4G64_F16S;
-    case NumericFormat::Q5G64_F16S:
-        return QType::Q5G64_F16S;
-    case NumericFormat::Q6G64_F16S:
-        return QType::Q6G64_F16S;
-    case NumericFormat::W8G32_F16S:
-        return QType::W8G32_F16S;
+        return QType::FP32;
+    case NumericFormat::INT32:
+        return QType::INT32;
+    case NumericFormat::Q4_G64_FP16:
+        return QType::Q4_G64_FP16;
+    case NumericFormat::Q5_G64_FP16:
+        return QType::Q5_G64_FP16;
+    case NumericFormat::Q6_G64_FP16:
+        return QType::Q6_G64_FP16;
+    case NumericFormat::Q8_G32_FP16:
+        return QType::Q8_G32_FP16;
     case NumericFormat::NVFP4:
         return QType::NVFP4;
-    case NumericFormat::FP8_E4M3FN_ROW_BF16S:
-        return QType::FP8_E4M3FN_ROW_BF16S;
+    case NumericFormat::FP8_E4M3FN_ROW_BF16:
+        return QType::FP8_E4M3FN_ROW_BF16;
     }
     throw std::logic_error("unhandled numeric format");
 }
@@ -59,7 +59,7 @@ DType dtype_for(NumericFormat format) {
         return DType::BF16;
     case NumericFormat::FP32:
         return DType::FP32;
-    case NumericFormat::I32:
+    case NumericFormat::INT32:
         return DType::I32;
     default:
         throw std::logic_error("quantized format has no direct dtype");

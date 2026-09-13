@@ -221,11 +221,11 @@ using HostWeight = std::variant<quantized_weight::PackedWeight, direct_bf16_weig
 QType qtype_for(WeightFormat format) {
     switch (format) {
     case WeightFormat::BF16:
-        return QType::BF16_CTRL;
+        return QType::BF16;
     case WeightFormat::Q5G64F16S:
-        return QType::Q5G64_F16S;
-    case WeightFormat::W8G32F16S:
-        return QType::W8G32_F16S;
+        return QType::Q5_G64_FP16;
+    case WeightFormat::Q8G32F16S:
+        return QType::Q8_G32_FP16;
     }
     throw std::invalid_argument("linear_add test: unknown weight format");
 }
@@ -345,7 +345,7 @@ int run_shape(std::string_view label, WeightFormat format, const ShapeCase& shap
                 CUDA_CHECK(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0));
                 for (int replay = 0; replay < 2; ++replay) {
                     CUDA_CHECK(cudaMemcpyAsync(output.data(), residual.data(), output.bytes(),
-                        cudaMemcpyHostToDevice, stream));
+                                               cudaMemcpyHostToDevice, stream));
                     CUDA_CHECK(cudaGraphLaunch(executable, stream));
                     CUDA_CHECK(cudaStreamSynchronize(stream));
                 }

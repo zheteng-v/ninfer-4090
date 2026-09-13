@@ -68,31 +68,31 @@ int run_fp8_a8() {
           Problem{34816, 5120, true, false}, Problem{5120, 6144, false, false},
           Problem{5120, 17408, false, false}}) {
         const std::size_t one = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 1, 1);
         const std::size_t two = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 2, 2);
         const std::size_t forty_eight = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 48, 48);
         const std::size_t early_interval = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 2, 4);
         const std::size_t hot_interval = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 1, 48);
         const std::size_t exact_1024 = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 1024, 1024);
         const std::size_t exact_1048 = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 1048, 1048);
         const std::size_t spanning = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::AllowA8, 1000, 1048);
         const std::size_t a16 = ops::linear_workspace_capacity_bytes(
-            QType::FP8_E4M3FN_ROW_BF16S, problem.rows, problem.input_rows,
+            QType::FP8_E4M3FN_ROW_BF16, problem.rows, problem.input_rows,
             ops::LinearPolicy::A16Only, 1, 2048);
         if ((one != 0) != problem.a8_at_one || (two != 0) != problem.a8_at_two ||
             early_interval != 0 || forty_eight <= two || hot_interval != forty_eight ||

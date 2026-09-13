@@ -25,7 +25,7 @@ Fp8LinearRoute resolve_route(std::int32_t output_rows, std::int32_t input_rows, 
     const Fp8Problem problem = resolve_fp8_problem(output_rows, input_rows);
     if (policy == LinearPolicy::A16Only) { return Fp8LinearRoute::A16; }
     // A permissive policy does not require a lower-precision route. Vocabulary logits retain
-    // BF16 activation compute for every policy, matching the existing Q6/W8 output heads.
+    // BF16 activation compute for every policy, matching the existing Q6/Q8 output heads.
     if (problem == Fp8Problem::Vocabulary &&
         (policy == LinearPolicy::AllowA8 || policy == LinearPolicy::AllowA4)) {
         return Fp8LinearRoute::A16;

@@ -97,9 +97,9 @@ PairFixture make_pair_fixture(std::int32_t k, std::uint32_t seed) {
     if (k == 5120) {
         return {
             false,
-            quantized_weight::make_patterned_weight(QType::W8G32_F16S, kOutputRows, k, seed,
+            quantized_weight::make_patterned_weight(QType::Q8_G32_FP16, kOutputRows, k, seed,
                                                     options),
-            quantized_weight::make_patterned_weight(QType::W8G32_F16S, kOutputRows, k, seed + 1U,
+            quantized_weight::make_patterned_weight(QType::Q8_G32_FP16, kOutputRows, k, seed + 1U,
                                                     options),
             0,
             0,
@@ -108,7 +108,7 @@ PairFixture make_pair_fixture(std::int32_t k, std::uint32_t seed) {
     if (k == 2048) {
         return {
             true,
-            quantized_weight::make_patterned_weight(QType::W8G32_F16S, kDFlashParentRows, k, seed,
+            quantized_weight::make_patterned_weight(QType::Q8_G32_FP16, kDFlashParentRows, k, seed,
                                                     options),
             {},
             kDFlashFirstRow,
@@ -233,7 +233,7 @@ int verify_preserved(const test::GuardedDeviceBuffer& device,
 
 bool cuda_available() { return !test::cuda_unavailable(); }
 
-int run_w8_a16_shape(std::string_view label, const ShapeCase& shape) {
+int run_q8_a16_shape(std::string_view label, const ShapeCase& shape) {
     const std::vector<std::int32_t> tokens = conformance_tokens(shape);
     if (tokens.empty()) { throw std::invalid_argument("linear_pair test: no token cases"); }
     const std::int32_t maximum_t = tokens.back();

@@ -77,7 +77,7 @@ int run_fp8_a16() {
     for (const ops::LinearPolicy policy : vocabulary_policies) {
         try {
             const std::size_t capacity = ops::linear_workspace_capacity_bytes(
-                QType::FP8_E4M3FN_ROW_BF16S, 248320, 5120, policy, 1, 2048);
+                QType::FP8_E4M3FN_ROW_BF16, 248320, 5120, policy, 1, 2048);
             if (capacity != 0) {
                 std::cerr << "FP8 vocabulary A16 route reported nonzero workspace\n";
                 ++failures;

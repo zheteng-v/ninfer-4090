@@ -28,15 +28,15 @@ struct Tensor {
 };
 
 enum class QType : std::uint16_t {
-    Q4G64_F16S           = 0,
-    Q5G64_F16S           = 1,
-    Q6G64_F16S           = 2,
-    W8G32_F16S           = 3,
-    BF16_CTRL            = 4,
-    FP32_CTRL            = 5,
-    I32_CTRL             = 6,
-    NVFP4                = 7,
-    FP8_E4M3FN_ROW_BF16S = 8,
+    Q4_G64_FP16         = 0,
+    Q5_G64_FP16         = 1,
+    Q6_G64_FP16         = 2,
+    Q8_G32_FP16         = 3,
+    BF16                = 4,
+    FP32                = 5,
+    INT32               = 6,
+    NVFP4               = 7,
+    FP8_E4M3FN_ROW_BF16 = 8,
 };
 
 enum class QuantLayout : std::uint16_t {
@@ -50,7 +50,7 @@ struct Weight {
     const void* payload            = nullptr;
     std::uint64_t payload_bytes    = 0;
     std::uint64_t high_plane_bytes = 0;
-    QType qtype                    = QType::Q4G64_F16S;
+    QType qtype                    = QType::Q4_G64_FP16;
     std::uint32_t group_size       = 0;
     std::int32_t shape[4]          = {1, 1, 1, 1};
     std::int32_t padded_shape[4]   = {1, 1, 1, 1};

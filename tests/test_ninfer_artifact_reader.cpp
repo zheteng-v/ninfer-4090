@@ -29,63 +29,63 @@ Json normative_directory() {
         {"objects", Json::array({
                         {{"name", "resource"},
                          {"kind", "resource"},
-                         {"encoding", "raw-bytes-v1"},
+                         {"encoding", "raw_bytes_v1"},
                          {"offset", 0},
                          {"bytes", 3}},
                         {{"name", "bf16"},
                          {"kind", "tensor"},
                          {"shape", {2, 3}},
                          {"format", "BF16"},
-                         {"layout", "contiguous-le-v1"},
+                         {"layout", "contiguous_le_v1"},
                          {"offset", 256},
                          {"bytes", 12}},
                         {{"name", "fp32_scalar"},
                          {"kind", "tensor"},
                          {"shape", Json::array()},
                          {"format", "FP32"},
-                         {"layout", "contiguous-le-v1"},
+                         {"layout", "contiguous_le_v1"},
                          {"offset", 512},
                          {"bytes", 4}},
                         {{"name", "i32"},
                          {"kind", "tensor"},
                          {"shape", {2}},
                          {"format", "I32"},
-                         {"layout", "contiguous-le-v1"},
+                         {"layout", "contiguous_le_v1"},
                          {"offset", 768},
                          {"bytes", 8}},
                         {{"name", "q4"},
                          {"kind", "tensor"},
                          {"shape", {1, 1}},
-                         {"format", "Q4G64_F16S"},
-                         {"layout", "row-split-k128-v1"},
+                         {"format", "q4_g64_fp16"},
+                         {"layout", "row_split_k128_v1"},
                          {"offset", 1024},
                          {"bytes", 260}},
                         {{"name", "q5"},
                          {"kind", "tensor"},
                          {"shape", {2, 130}},
-                         {"format", "Q5G64_F16S"},
-                         {"layout", "row-split-k128-v1"},
+                         {"format", "q5_g64_fp16"},
+                         {"layout", "row_split_k128_v1"},
                          {"offset", 1536},
                          {"bytes", 528}},
                         {{"name", "q6"},
                          {"kind", "tensor"},
                          {"shape", {1, 64}},
-                         {"format", "Q6G64_F16S"},
-                         {"layout", "row-split-k128-v1"},
+                         {"format", "q6_g64_fp16"},
+                         {"layout", "row_split_k128_v1"},
                          {"offset", 2304},
                          {"bytes", 516}},
-                        {{"name", "w8"},
+                        {{"name", "q8"},
                          {"kind", "tensor"},
                          {"shape", {1, 33}},
-                         {"format", "W8G32_F16S"},
-                         {"layout", "row-split-k128-v1"},
+                         {"format", "q8_g32_fp16"},
+                         {"layout", "row_split_k128_v1"},
                          {"offset", 3072},
                          {"bytes", 264}},
                         {{"name", "fp8_row"},
                          {"kind", "tensor"},
                          {"shape", {2, 4}},
-                         {"format", "FP8_E4M3FN_ROW_BF16S"},
-                         {"layout", "row-scale-v1"},
+                         {"format", "fp8_e4m3fn_row_bf16"},
+                         {"layout", "row_scale_v1"},
                          {"offset", 3584},
                          {"bytes", 260}},
                     })},
@@ -111,23 +111,23 @@ void test_registered_sizes() {
     const std::array<std::uint64_t, 2> q4_shape  = {1, 1};
     const std::array<std::uint64_t, 2> q5_shape  = {2, 130};
     const std::array<std::uint64_t, 2> q6_shape  = {1, 64};
-    const std::array<std::uint64_t, 2> w8_shape  = {1, 33};
+    const std::array<std::uint64_t, 2> q8_shape  = {1, 33};
     const std::array<std::uint64_t, 2> fp8_shape = {2, 4};
 
     if (tensor_encoded_size(direct, NumericFormat::BF16, shape_2x3) != 12 ||
         tensor_encoded_size(direct, NumericFormat::FP32, {}) != 4 ||
-        tensor_encoded_size(direct, NumericFormat::I32, shape_2) != 8 ||
-        tensor_encoded_size(rows, NumericFormat::Q4G64_F16S, q4_shape) != 260 ||
-        tensor_encoded_size(rows, NumericFormat::Q5G64_F16S, q5_shape) != 528 ||
-        tensor_encoded_size(rows, NumericFormat::Q6G64_F16S, q6_shape) != 516 ||
-        tensor_encoded_size(rows, NumericFormat::W8G32_F16S, w8_shape) != 264 ||
-        tensor_encoded_size(fp8_rows, NumericFormat::FP8_E4M3FN_ROW_BF16S, fp8_shape) != 260) {
+        tensor_encoded_size(direct, NumericFormat::INT32, shape_2) != 8 ||
+        tensor_encoded_size(rows, NumericFormat::Q4_G64_FP16, q4_shape) != 260 ||
+        tensor_encoded_size(rows, NumericFormat::Q5_G64_FP16, q5_shape) != 528 ||
+        tensor_encoded_size(rows, NumericFormat::Q6_G64_FP16, q6_shape) != 516 ||
+        tensor_encoded_size(rows, NumericFormat::Q8_G32_FP16, q8_shape) != 264 ||
+        tensor_encoded_size(fp8_rows, NumericFormat::FP8_E4M3FN_ROW_BF16, fp8_shape) != 260) {
         throw std::runtime_error("registered encoded-size calculation is wrong");
     }
     expect_artifact_error([&] { tensor_encoded_size(fp8_rows, NumericFormat::NVFP4, fp8_shape); },
                           "row-scale format mismatch");
     expect_artifact_error(
-        [&] { tensor_encoded_size(fp8_rows, NumericFormat::FP8_E4M3FN_ROW_BF16S, shape_2); },
+        [&] { tensor_encoded_size(fp8_rows, NumericFormat::FP8_E4M3FN_ROW_BF16, shape_2); },
         "row-scale rank mismatch");
 }
 
@@ -141,7 +141,7 @@ void test_normative_fixture() {
     }
 
     const std::array<std::string_view, 9> expected_names = {
-        "resource", "bf16", "fp32_scalar", "i32", "q4", "q5", "q6", "w8", "fp8_row",
+        "resource", "bf16", "fp32_scalar", "i32", "q4", "q5", "q6", "q8", "fp8_row",
     };
     for (std::size_t i = 0; i < expected_names.size(); ++i) {
         const auto& object = reader.objects()[i];
@@ -165,9 +165,9 @@ void test_normative_fixture() {
     const auto* q5       = std::get_if<TensorDescriptor>(reader.find("q5"));
     const auto* fp8      = std::get_if<TensorDescriptor>(reader.find("fp8_row"));
     if (resource == nullptr || q5 == nullptr || q5->shape != std::vector<std::uint64_t>({2, 130}) ||
-        q5->format != NumericFormat::Q5G64_F16S || q5->layout != StorageLayout::RowSplitK128V1 ||
+        q5->format != NumericFormat::Q5_G64_FP16 || q5->layout != StorageLayout::RowSplitK128V1 ||
         fp8 == nullptr || fp8->shape != std::vector<std::uint64_t>({2, 4}) ||
-        fp8->format != NumericFormat::FP8_E4M3FN_ROW_BF16S ||
+        fp8->format != NumericFormat::FP8_E4M3FN_ROW_BF16 ||
         fp8->layout != StorageLayout::RowScaleV1) {
         throw std::runtime_error("fixture object signature mismatch");
     }

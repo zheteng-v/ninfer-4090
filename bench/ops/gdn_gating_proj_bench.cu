@@ -128,7 +128,7 @@ DeviceBuffer fp32_values(std::size_t count, std::uint32_t seed, float low, float
 
 Weight weight(const void* data, int rows, int hidden) {
     Weight w{};
-    w.qtype   = QType::BF16_CTRL;
+    w.qtype   = QType::BF16;
     w.layout  = QuantLayout::Contiguous;
     w.payload = w.qdata = data;
     w.payload_bytes     = std::uint64_t(rows) * hidden * 2;

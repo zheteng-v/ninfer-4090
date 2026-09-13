@@ -21,13 +21,13 @@ public:
 enum class NumericFormat {
     BF16,
     FP32,
-    I32,
-    Q4G64_F16S,
-    Q5G64_F16S,
-    Q6G64_F16S,
-    W8G32_F16S,
+    INT32,
+    Q4_G64_FP16,
+    Q5_G64_FP16,
+    Q6_G64_FP16,
+    Q8_G32_FP16,
     NVFP4,
-    FP8_E4M3FN_ROW_BF16S,
+    FP8_E4M3FN_ROW_BF16,
 };
 
 enum class StorageLayout {

@@ -25,7 +25,7 @@ namespace ninfer::ops {
                                                                  std::int32_t max_tokens);
 
 /**
- * Policy-bearing capacity query. Q4/W8 admit A16Only. NVFP4 admits A16Only through T=16 and
+ * Policy-bearing capacity query. Q4/Q8 admit A16Only. NVFP4 admits A16Only through T=16 and
  * AllowA4 for every positive T. Row-scaled FP8 admits A16Only and AllowA8 for every positive T.
  * A permissive policy covers whichever qualified route the private resolver selects across the
  * requested interval.
@@ -44,12 +44,12 @@ linear_swiglu_workspace_capacity_bytes(QType qtype, std::int32_t gate_up_rows,
  *
  * Logical shapes / supported domain:
  *   T may be any positive value. The registered profiles are:
- *   - Q4G64_F16S weight [34816,5120], x [5120,T], out [17408,T];
- *   - W8G32_F16S weight [12288,2048], x [2048,T], out [6144,T];
- *   - W8G32_F16S weight [34816,5120], x [5120,T], out [17408,T];
+ *   - Q4_G64_FP16 weight [34816,5120], x [5120,T], out [17408,T];
+ *   - Q8_G32_FP16 weight [12288,2048], x [2048,T], out [6144,T];
+ *   - Q8_G32_FP16 weight [34816,5120], x [5120,T], out [17408,T];
  *   - NVFP4 BlockScaleK16M128x4 weight [34816,5120], x [5120,T], out [17408,T];
- *   - FP8_E4M3FN_ROW_BF16S RowScale weight [34816,5120], x [5120,T], out [17408,T].
- *   Inputs and output are contiguous BF16. Q4/W8 scales are FP16, NVFP4 scales are E4M3FN, and
+ *   - FP8_E4M3FN_ROW_BF16 RowScale weight [34816,5120], x [5120,T], out [17408,T].
+ *   Inputs and output are contiguous BF16. Q4/Q8 scales are FP16, NVFP4 scales are E4M3FN, and
  *   row-scaled FP8 has one BF16 multiplier per gate/up parent row. Gate rows `[0,17408)` precede
  *   their matching up rows `[17408,34816)`.
  *
@@ -66,7 +66,7 @@ linear_swiglu_workspace_capacity_bytes(QType qtype, std::int32_t gate_up_rows,
  *
  * Workspace:
  *   Caller-owned transient storage reported by linear_swiglu_workspace_capacity_bytes(),
- *   scoped to the call. W8, NVFP4 A16, and row-scaled FP8 A16 require zero bytes; A4/A8 routes use
+ *   scoped to the call. Q8, NVFP4 A16, and row-scaled FP8 A16 require zero bytes; A4/A8 routes use
  *   caller-owned activation storage and may use private projection storage. There is no persistent
  *   state side effect.
  */
@@ -74,7 +74,7 @@ void linear_swiglu(const Tensor& x, const Weight& gate_up_weight, Tensor& out, L
                    WorkspaceArena& ws, cudaStream_t stream);
 
 /**
- * A16-only convenience form. Q4/W8 and row-scaled FP8 retain their complete positive-T domain.
+ * A16-only convenience form. Q4/Q8 and row-scaled FP8 retain their complete positive-T domain.
  * NVFP4 is admitted only through T=16; larger NVFP4 extents require the policy-bearing AllowA4
  * form.
  */

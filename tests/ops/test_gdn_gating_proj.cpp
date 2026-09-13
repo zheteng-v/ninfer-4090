@@ -68,7 +68,7 @@ int verify_normwise(const std::string& label, const std::vector<double>& actual,
 
 Weight bf16_weight(void* data, std::int32_t rows, std::int32_t hidden) {
     Weight weight{};
-    weight.qtype           = QType::BF16_CTRL;
+    weight.qtype           = QType::BF16;
     weight.layout          = QuantLayout::Contiguous;
     weight.payload         = data;
     weight.payload_bytes   = static_cast<std::uint64_t>(rows) * hidden * sizeof(std::uint16_t);

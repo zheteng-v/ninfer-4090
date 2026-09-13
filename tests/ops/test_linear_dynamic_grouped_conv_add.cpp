@@ -190,7 +190,7 @@ int run_profile(std::int32_t input_rows) {
     weight_options.row_split_scale = quantized_weight::RowSplitScalePattern::Tiny;
     weight_options.row_split_codes = quantized_weight::RowSplitCodePattern::Hashed;
     input_projection::DevicePackedWeight projection_weight(quantized_weight::make_patterned_weight(
-        QType::W8G32_F16S, kHidden, input_rows, 503U + static_cast<std::uint32_t>(input_rows),
+        QType::Q8_G32_FP16, kHidden, input_rows, 503U + static_cast<std::uint32_t>(input_rows),
         weight_options));
     const std::vector<double> projection =
         projection_oracle(projection_weight.host, activation, input_rows);

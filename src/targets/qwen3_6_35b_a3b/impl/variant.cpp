@@ -254,14 +254,14 @@ std::size_t Variant::attention_projection_workspace_capacity_bytes(WeightsProfil
                                                                    std::int32_t first,
                                                                    std::int32_t last) {
     return ops::attn_input_proj_workspace_capacity_bytes(
-        QType::W8G32_F16S, 9216, TextConfig::hidden, ops::LinearPolicy::A16Only, first, last);
+        QType::Q8_G32_FP16, 9216, TextConfig::hidden, ops::LinearPolicy::A16Only, first, last);
 }
 
 std::size_t Variant::attention_output_projection_workspace_capacity_bytes(WeightsProfile,
                                                                           qwen3_6::TextPhase,
                                                                           std::int32_t first,
                                                                           std::int32_t last) {
-    return ops::linear_add_workspace_capacity_bytes(QType::W8G32_F16S, TextConfig::hidden,
+    return ops::linear_add_workspace_capacity_bytes(QType::Q8_G32_FP16, TextConfig::hidden,
                                                     TextConfig::query_size,
                                                     ops::LinearPolicy::A16Only, first, last);
 }
@@ -271,7 +271,7 @@ std::size_t Variant::gdn_input_projection_workspace_capacity_bytes(WeightsProfil
                                                                    std::int32_t first,
                                                                    std::int32_t last) {
     return ops::gdn_input_proj_workspace_capacity_bytes(
-        QType::W8G32_F16S, 12288, TextConfig::hidden, ops::LinearPolicy::A16Only, first, last);
+        QType::Q8_G32_FP16, 12288, TextConfig::hidden, ops::LinearPolicy::A16Only, first, last);
 }
 
 std::size_t Variant::gdn_input_projection_snapshot_workspace_capacity_bytes(WeightsProfile,
@@ -298,7 +298,7 @@ std::size_t Variant::gdn_output_projection_workspace_capacity_bytes(WeightsProfi
                                                                     qwen3_6::TextPhase,
                                                                     std::int32_t first,
                                                                     std::int32_t last) {
-    return ops::linear_add_workspace_capacity_bytes(QType::W8G32_F16S, TextConfig::hidden,
+    return ops::linear_add_workspace_capacity_bytes(QType::Q8_G32_FP16, TextConfig::hidden,
                                                     TextConfig::value_dim,
                                                     ops::LinearPolicy::A16Only, first, last);
 }
@@ -311,15 +311,15 @@ std::size_t Variant::gdn_norm_control_projection_workspace_capacity_bytes(std::i
 
 std::size_t Variant::post_mixer_workspace_capacity_bytes(WeightsProfile, qwen3_6::TextPhase,
                                                          std::int32_t first, std::int32_t last) {
-    return std::max(
-        ops::sparse_moe_workspace_capacity_bytes(QType::Q4G64_F16S, QType::Q5G64_F16S, first, last),
-        ops::sparse_moe_workspace_capacity_bytes(QType::Q4G64_F16S, QType::Q6G64_F16S, first,
-                                                 last));
+    return std::max(ops::sparse_moe_workspace_capacity_bytes(QType::Q4_G64_FP16, QType::Q5_G64_FP16,
+                                                             first, last),
+                    ops::sparse_moe_workspace_capacity_bytes(QType::Q4_G64_FP16, QType::Q6_G64_FP16,
+                                                             first, last));
 }
 
 std::size_t Variant::mtp_post_mixer_workspace_capacity_bytes(std::int32_t first,
                                                              std::int32_t last) {
-    return ops::sparse_moe_workspace_capacity_bytes(QType::W8G32_F16S, QType::W8G32_F16S, first,
+    return ops::sparse_moe_workspace_capacity_bytes(QType::Q8_G32_FP16, QType::Q8_G32_FP16, first,
                                                     last);
 }
 

@@ -55,18 +55,18 @@ enum class LinearPolicy : std::uint8_t {
  * no bias, activation, residual addition, or transpose mode.
  *
  * @par Supported execution domain
- * Registered execution uses RowSplit Q4G64_F16S, Q5G64_F16S, Q6G64_F16S, or W8G32_F16S weights
- * with FP16 scales, block-scaled NVFP4 weights, row-scaled FP8_E4M3FN_ROW_BF16S weights, plus
- * registered contiguous BF16_CTRL problems. Each format owns a finite registry of exact physical
+ * Registered execution uses RowSplit Q4_G64_FP16, Q5_G64_FP16, Q6_G64_FP16, or Q8_G32_FP16 weights
+ * with FP16 scales, block-scaled NVFP4 weights, row-scaled FP8_E4M3FN_ROW_BF16 weights, plus
+ * registered contiguous BF16 problems. Each format owns a finite registry of exact physical
  * weight problems and selects its kernel internally; a valid encoding and alignment do not imply
  * arbitrary N/K support. FP8 currently registers `[N,K]` in `{[14336,5120], [16384,5120],
  * [34816,5120], [248320,5120], [5120,6144], [5120,17408]}` at every positive T. The current NVFP4
- * problems register the five non-vocabulary FP8 geometries and accept every positive T. W8 also
- * registers `[5120,25600]` at every positive T. BF16_CTRL registers `[14336,5120]`,
+ * problems register the five non-vocabulary FP8 geometries and accept every positive T. Q8 also
+ * registers `[5120,25600]` at every positive T. BF16 registers `[14336,5120]`,
  * `[5120,6144]`, and `[256,5120]` at every positive T. Text and MTP packed-weight problems accept
  * every positive column extent T. Registered Vision problems accept raw-patch P in
  * `{4,8,...,131072}` or merged-token V in `[1,32768]`; a matrix column does not inherently
- * represent a text token. FP32_CTRL is unsupported.
+ * represent a text token. FP32 is unsupported.
  *
  * @par Numerical contract
  * Test fixture code materializes the persistent weight as its logical FP32 dequantized matrix.
@@ -81,7 +81,7 @@ enum class LinearPolicy : std::uint8_t {
  * @par Compute policy
  * `policy` specifies the permitted private activation-compute set. A permission does not require a
  * corresponding low-precision route: the resolved plan may remain A16 when that is the qualified
- * choice. BF16_CTRL admits only LinearPolicy::A16Only. Registered Q4/Q5/Q6/W8 formats admit
+ * choice. BF16 admits only LinearPolicy::A16Only. Registered Q4/Q5/Q6/Q8 formats admit
  * LinearPolicy::A16Only and LinearPolicy::AllowA8. The five non-vocabulary FP8 problems admit the
  * same two policies at every positive T. AllowA8 resolves `[14336,5120]` to A16 through T=11 and
  * A8 from T=12; `[16384,5120]` to A16 through T=10 and A8 from T=11; `[34816,5120]` to A8 at T=1,

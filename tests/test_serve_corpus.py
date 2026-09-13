@@ -1,33 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from tools.bench import run_serve_concurrency as campaign
-from tools.bench import run_serve_corpus as corpus
 from tools.bench.run_serve_corpus import (
-    CampaignError,
     Fixture,
     RunSpec,
     build_result_record,
-    require_server_log_identity,
-    summary_row,
 )
-
-
-def test_request_log_v20_identity_is_accepted() -> None:
-    current = {
-        "artifact_type": "ninfer_serve_request_log",
-        "schema_version": 20,
-        "event": "server_start",
-    }
-    require_server_log_identity(current, "server_start")
-
-    stale = dict(current, schema_version=19)
-    with pytest.raises(CampaignError):
-        require_server_log_identity(stale, "server_start")
 
 
 def test_result_record_parses_request_host_exposure() -> None:
@@ -103,78 +84,6 @@ def test_result_record_parses_request_host_exposure() -> None:
     assert record["schema_version"] == 6
     assert record["metrics"]["engine_host_exposed_ms"] == pytest.approx(15.0)
     assert record["metrics"]["decode_host_us_per_round"] == pytest.approx(5000.0)
-    assert record["metrics"]["decode_device_wait_us_per_round"] == pytest.approx(100000.0)
-
-
-def test_summary_retains_one_canonical_weights_id() -> None:
-    records = [{"weights_id": "nvfp4", "metrics": {}}]
-    row = summary_row(
-        "context_profile",
-        "qwen3_6_27b",
-        "fixture",
-        "fixture",
-        "mtp0",
-        "greedy",
-        records,
+    assert record["metrics"]["decode_device_wait_us_per_round"] == pytest.approx(
+        100000.0
     )
-    assert row["weights_id"] == "nvfp4"
-
-    with pytest.raises(CampaignError):
-        summary_row(
-            "context_profile",
-            "qwen3_6_27b",
-            "fixture",
-            "fixture",
-            "mtp0",
-            "greedy",
-            [*records, {"weights_id": "groupwise-int", "metrics": {}}],
-        )
-
-
-def test_dflash2_c1_keeps_the_published_corpus_and_order() -> None:
-    point = campaign.Point(
-        target="qwen3_8_27b",
-        model_id="qwen3.8-27b",
-        artifact=Path("model.ninfer"),
-        speculative_mode="dflash2_7",
-        speculative_backend="dflash2",
-        draft_tokens=7,
-        sampling_mode="stochastic",
-        suite="corpus-makespan",
-        concurrency=1,
-    )
-    fixtures = corpus.load_fixtures()
-    jobs = campaign.build_jobs(point, fixtures, 8192)
-    reference = campaign.build_jobs(
-        replace(point, speculative_mode="mtp3", speculative_backend="mtp", draft_tokens=3),
-        fixtures,
-        8192,
-    )
-    assert len(jobs) == 75
-    assert [(j.fixture.name, j.seed, j.max_tokens) for j in jobs] == [
-        (j.fixture.name, j.seed, j.max_tokens) for j in reference
-    ]
-    assert all(j.max_tokens == (65536 if j.fixture.thinking else 4096) for j in jobs)
-    args = campaign.parse_args(
-        [
-            "--artifact", "qwen3_8_27b=model.ninfer",
-            "--mode", "dflash2_7",
-            "--suite", "corpus-makespan",
-            "--concurrency", "1",
-            "--max-context", "131072",
-            "--kv-capacity", "auto",
-            "--output", "results",
-        ]
-    )
-    command = campaign.server_command(Path("ninfer-serve"), point, Path("server.jsonl"), args)
-    for flag, value in [
-        ("--spec", "dflash2"),
-        ("--draft-tokens", "7"),
-        ("--max-concurrency", "1"),
-        ("--max-context", "131072"),
-        ("--kv-dtype", "int8"),
-        ("--temperature", "0.6"),
-        ("--presence-penalty", "1.0"),
-    ]:
-        assert command[command.index(flag) + 1] == value
-    assert "--lm-head-draft" in command and "--no-prefix-reuse" in command

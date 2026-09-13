@@ -91,28 +91,28 @@ std::uint64_t require_unsigned(const Json& value, std::string_view label, bool p
 }
 
 NumericFormat parse_format(std::string_view name) {
-    if (name == "BF16") { return NumericFormat::BF16; }
-    if (name == "FP32") { return NumericFormat::FP32; }
-    if (name == "I32") { return NumericFormat::I32; }
-    if (name == "Q4G64_F16S") { return NumericFormat::Q4G64_F16S; }
-    if (name == "Q5G64_F16S") { return NumericFormat::Q5G64_F16S; }
-    if (name == "Q6G64_F16S") { return NumericFormat::Q6G64_F16S; }
-    if (name == "W8G32_F16S") { return NumericFormat::W8G32_F16S; }
-    if (name == "NVFP4") { return NumericFormat::NVFP4; }
-    if (name == "FP8_E4M3FN_ROW_BF16S") { return NumericFormat::FP8_E4M3FN_ROW_BF16S; }
+    if (name == "bf16") { return NumericFormat::BF16; }
+    if (name == "fp32") { return NumericFormat::FP32; }
+    if (name == "int32") { return NumericFormat::INT32; }
+    if (name == "q4_g64_fp16") { return NumericFormat::Q4_G64_FP16; }
+    if (name == "q5_g64_fp16") { return NumericFormat::Q5_G64_FP16; }
+    if (name == "q6_g64_fp16") { return NumericFormat::Q6_G64_FP16; }
+    if (name == "q8_g32_fp16") { return NumericFormat::Q8_G32_FP16; }
+    if (name == "nvfp4") { return NumericFormat::NVFP4; }
+    if (name == "fp8_e4m3fn_row_bf16") { return NumericFormat::FP8_E4M3FN_ROW_BF16; }
     throw ArtifactError("unknown tensor format: " + std::string(name));
 }
 
 StorageLayout parse_layout(std::string_view name) {
-    if (name == "contiguous-le-v1") { return StorageLayout::ContiguousLeV1; }
-    if (name == "row-split-k128-v1") { return StorageLayout::RowSplitK128V1; }
-    if (name == "blockscale-k16-m128x4-v1") { return StorageLayout::BlockScaleK16M128x4V1; }
-    if (name == "row-scale-v1") { return StorageLayout::RowScaleV1; }
+    if (name == "contiguous_le_v1") { return StorageLayout::ContiguousLeV1; }
+    if (name == "row_split_k128_v1") { return StorageLayout::RowSplitK128V1; }
+    if (name == "block_scale_k16_m128x4_v1") { return StorageLayout::BlockScaleK16M128x4V1; }
+    if (name == "row_scale_v1") { return StorageLayout::RowScaleV1; }
     throw ArtifactError("unknown tensor layout: " + std::string(name));
 }
 
 ResourceEncoding parse_encoding(std::string_view name) {
-    if (name == "raw-bytes-v1") { return ResourceEncoding::RawBytesV1; }
+    if (name == "raw_bytes_v1") { return ResourceEncoding::RawBytesV1; }
     throw ArtifactError("unknown resource encoding: " + std::string(name));
 }
 

@@ -130,12 +130,12 @@ struct Q5GdnSmallTEpilogue {
 template <class Publish, bool TriggerPdl, bool JoinPdl, bool Dependent>
 void launch_q4_t1(const Tensor& x, const Weight& qk_weight,
                   const GdnConvEpilogue<Publish>& qk_epilogue, Tensor& query, cudaStream_t stream) {
-    constexpr int q4_threads = Q4GemvR1W8DirectSchedule::kThreads;
-    constexpr int q4_blocks  = kQkRows / Q4GemvR1W8DirectSchedule::kRowsPerCta;
+    constexpr int q4_threads = Q4GemvR1Q8DirectSchedule::kThreads;
+    constexpr int q4_blocks  = kQkRows / Q4GemvR1Q8DirectSchedule::kRowsPerCta;
     if constexpr (Dependent) {
         CUDA_CHECK(pdl::launch_dependent(
             {dim3(q4_blocks), dim3(q4_threads), 0, stream},
-            q4_rowsplit_gemv_kernel<Q4GemvR1W8DirectSchedule, false, 0,
+            q4_rowsplit_gemv_kernel<Q4GemvR1Q8DirectSchedule, false, 0,
                                     Q4GdnDecodeEpilogue<Publish>, TriggerPdl, JoinPdl>,
             static_cast<const __nv_bfloat16*>(x.data),
             static_cast<const std::uint8_t*>(qk_weight.qdata),
@@ -143,7 +143,7 @@ void launch_q4_t1(const Tensor& x, const Weight& qk_weight,
             static_cast<__nv_bfloat16*>(query.data), nullptr, kQkRows, kHidden,
             Q4GdnDecodeEpilogue<Publish>{qk_epilogue}));
     } else {
-        q4_rowsplit_gemv_kernel<Q4GemvR1W8DirectSchedule, false, 0, Q4GdnDecodeEpilogue<Publish>,
+        q4_rowsplit_gemv_kernel<Q4GemvR1Q8DirectSchedule, false, 0, Q4GdnDecodeEpilogue<Publish>,
                                 TriggerPdl, JoinPdl><<<q4_blocks, q4_threads, 0, stream>>>(
             static_cast<const __nv_bfloat16*>(x.data),
             static_cast<const std::uint8_t*>(qk_weight.qdata),

@@ -20,7 +20,7 @@ VisionBackbonePlan bind_vision_backbone(artifact::Binder& binder,
     };
 
     VisionBackbonePlan out;
-    out.patch_embedding = bind("vision/patch_embedding", NumericFormat::Q6G64_F16S,
+    out.patch_embedding = bind("vision/patch_embedding", NumericFormat::Q6_G64_FP16,
                                {VisionBackboneConfig::hidden, VisionBackboneConfig::patch_dim});
     out.patch_embedding_bias =
         bind("vision/patch_embedding_bias", NumericFormat::BF16, {VisionBackboneConfig::hidden});
@@ -31,19 +31,19 @@ VisionBackbonePlan bind_vision_backbone(artifact::Binder& binder,
     for (std::size_t layer = 0; layer < out.layers.size(); ++layer) {
         VisionLayerPlan& target  = out.layers[layer];
         const std::string prefix = "vision/layers/" + std::to_string(layer) + "/";
-        target.qkv               = bind(prefix + "attention/qkv", NumericFormat::Q4G64_F16S,
+        target.qkv               = bind(prefix + "attention/qkv", NumericFormat::Q4_G64_FP16,
                                         {3 * VisionBackboneConfig::hidden, VisionBackboneConfig::hidden});
         target.qkv_bias          = bind(prefix + "attention/qkv_bias", NumericFormat::BF16,
                                         {3 * VisionBackboneConfig::hidden});
-        target.output            = bind(prefix + "attention/output", NumericFormat::Q5G64_F16S,
+        target.output            = bind(prefix + "attention/output", NumericFormat::Q5_G64_FP16,
                                         {VisionBackboneConfig::hidden, VisionBackboneConfig::hidden});
         target.output_bias       = bind(prefix + "attention/output_bias", NumericFormat::BF16,
                                         {VisionBackboneConfig::hidden});
-        target.fc1               = bind(prefix + "mlp/fc1", NumericFormat::Q4G64_F16S,
+        target.fc1               = bind(prefix + "mlp/fc1", NumericFormat::Q4_G64_FP16,
                                         {VisionBackboneConfig::intermediate, VisionBackboneConfig::hidden});
         target.fc1_bias          = bind(prefix + "mlp/fc1_bias", NumericFormat::BF16,
                                         {VisionBackboneConfig::intermediate});
-        target.fc2               = bind(prefix + "mlp/fc2", NumericFormat::Q5G64_F16S,
+        target.fc2               = bind(prefix + "mlp/fc2", NumericFormat::Q5_G64_FP16,
                                         {VisionBackboneConfig::hidden, VisionBackboneConfig::intermediate});
         target.fc2_bias =
             bind(prefix + "mlp/fc2_bias", NumericFormat::BF16, {VisionBackboneConfig::hidden});
@@ -67,7 +67,7 @@ VisionMergerInputPlan bind_vision_merger_input(artifact::Binder& binder,
         return artifact::bind_tensor(binder, name, format, shape, placement);
     };
     return VisionMergerInputPlan{
-        .fc1      = bind("vision/merger/fc1", NumericFormat::W8G32_F16S,
+        .fc1      = bind("vision/merger/fc1", NumericFormat::Q8_G32_FP16,
                          {VisionBackboneConfig::merger_hidden, VisionBackboneConfig::merger_hidden}),
         .fc1_bias = bind("vision/merger/fc1_bias", NumericFormat::BF16,
                          {VisionBackboneConfig::merger_hidden}),
@@ -97,7 +97,7 @@ VisionCommonWeights materialize_vision_common(const artifact::MaterializedArtifa
 
     VisionCommonWeights out;
     out.patch_embedding = artifact::materialized_weight(
-        materialized, backbone.patch_embedding, NumericFormat::Q6G64_F16S,
+        materialized, backbone.patch_embedding, NumericFormat::Q6_G64_FP16,
         VisionBackboneConfig::hidden, VisionBackboneConfig::patch_dim);
     out.patch_embedding_bias =
         artifact::materialized_tensor(materialized, backbone.patch_embedding_bias,
@@ -110,23 +110,23 @@ VisionCommonWeights materialize_vision_common(const artifact::MaterializedArtifa
         const VisionLayerPlan& source = backbone.layers[layer];
         VisionLayerWeights& target    = out.layers[layer];
         target.qkv                    = artifact::materialized_weight(
-            materialized, source.qkv, NumericFormat::Q4G64_F16S, 3 * VisionBackboneConfig::hidden,
+            materialized, source.qkv, NumericFormat::Q4_G64_FP16, 3 * VisionBackboneConfig::hidden,
             VisionBackboneConfig::hidden);
         target.qkv_bias = artifact::materialized_tensor(
             materialized, source.qkv_bias, NumericFormat::BF16, {3 * VisionBackboneConfig::hidden});
         target.output = artifact::materialized_weight(
-            materialized, source.output, NumericFormat::Q5G64_F16S, VisionBackboneConfig::hidden,
+            materialized, source.output, NumericFormat::Q5_G64_FP16, VisionBackboneConfig::hidden,
             VisionBackboneConfig::hidden);
         target.output_bias = artifact::materialized_tensor(
             materialized, source.output_bias, NumericFormat::BF16, {VisionBackboneConfig::hidden});
         target.fc1 = artifact::materialized_weight(
-            materialized, source.fc1, NumericFormat::Q4G64_F16S, VisionBackboneConfig::intermediate,
-            VisionBackboneConfig::hidden);
+            materialized, source.fc1, NumericFormat::Q4_G64_FP16,
+            VisionBackboneConfig::intermediate, VisionBackboneConfig::hidden);
         target.fc1_bias =
             artifact::materialized_tensor(materialized, source.fc1_bias, NumericFormat::BF16,
                                           {VisionBackboneConfig::intermediate});
         target.fc2 = artifact::materialized_weight(
-            materialized, source.fc2, NumericFormat::Q5G64_F16S, VisionBackboneConfig::hidden,
+            materialized, source.fc2, NumericFormat::Q5_G64_FP16, VisionBackboneConfig::hidden,
             VisionBackboneConfig::intermediate);
         target.fc2_bias = artifact::materialized_tensor(
             materialized, source.fc2_bias, NumericFormat::BF16, {VisionBackboneConfig::hidden});
@@ -141,7 +141,7 @@ VisionCommonWeights materialize_vision_common(const artifact::MaterializedArtifa
     }
 
     out.merger_fc1 = artifact::materialized_weight(
-        materialized, merger_input.fc1, NumericFormat::W8G32_F16S,
+        materialized, merger_input.fc1, NumericFormat::Q8_G32_FP16,
         VisionBackboneConfig::merger_hidden, VisionBackboneConfig::merger_hidden);
     out.merger_fc1_bias =
         artifact::materialized_tensor(materialized, merger_input.fc1_bias, NumericFormat::BF16,

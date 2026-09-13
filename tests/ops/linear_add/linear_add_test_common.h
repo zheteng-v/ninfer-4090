@@ -11,7 +11,7 @@ namespace ninfer::test::linear_add {
 enum class WeightFormat : std::uint8_t {
     BF16,
     Q5G64F16S,
-    W8G32F16S,
+    Q8G32F16S,
 };
 
 struct ShapeCase {
