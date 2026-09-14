@@ -75,7 +75,7 @@ ninfer_add_op_bench(ninfer_mtp_pack_bench SOURCES ops/mtp_pack_bench.cu)
 ninfer_add_op_bench(ninfer_proposal_remap_bench SOURCES ops/proposal_remap_bench.cu)
 
 # End-to-end product benchmark: public Engine API and native .ninfer artifacts only.
-add_executable(ninfer_bench targets/qwen3_6_27b/ninfer_bench.cpp targets/qwen3_6_27b/ninfer_bench_support.cpp)
+add_executable(ninfer_bench inference/ninfer_bench.cpp inference/ninfer_bench_support.cpp)
 target_include_directories(ninfer_bench PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}/include
@@ -90,16 +90,13 @@ target_link_libraries(ninfer_bench PRIVATE ninfer_engine ${NINFER_CUDART_TARGET}
 add_executable(ninfer_context_cost_bench
   context_cost/context_cost_bench.cpp
   context_cost/context_cost_measure.cpp
-  context_cost/qwen3_6_context_fixture.cpp)
+  context_cost/model_context_fixture.cpp)
 target_include_directories(ninfer_context_cost_bench PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR}/context_cost
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/src
-  ${PROJECT_SOURCE_DIR}/third_party
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export)
+  ${PROJECT_SOURCE_DIR}/third_party)
 target_compile_definitions(ninfer_context_cost_bench PRIVATE
   NINFER_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_link_libraries(ninfer_context_cost_bench PRIVATE
@@ -107,28 +104,24 @@ target_link_libraries(ninfer_context_cost_bench PRIVATE
 
 # Native target-private MTP proposal/verification microbenchmark. It enters through the target
 # Program facade and executes the production round schedule over a real .ninfer artifact.
-add_executable(ninfer_qwen3_6_27b_mtp_round_bench
-  targets/qwen3_6_27b/target_mtp_round_bench.cpp)
-target_include_directories(ninfer_qwen3_6_27b_mtp_round_bench PRIVATE
+add_executable(ninfer_qwen3_5_mtp_round_bench
+  models/qwen3_5/mtp_round_bench.cpp)
+target_include_directories(ninfer_qwen3_5_mtp_round_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/src
-  ${PROJECT_SOURCE_DIR}/third_party
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
-target_link_libraries(ninfer_qwen3_6_27b_mtp_round_bench PRIVATE
+  ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninfer_qwen3_5_mtp_round_bench PRIVATE
   ninfer_engine ninfer_core)
 
 # Complete production DFlash steady round: confirmed-context append, next proposal, target
 # verification/acceptance, and host publication over a real 35B artifact.
-add_executable(ninfer_qwen3_6_35b_a3b_dflash_round_bench
-  targets/qwen3_6_35b_a3b/dflash_round_bench.cpp)
-target_include_directories(ninfer_qwen3_6_35b_a3b_dflash_round_bench PRIVATE
+add_executable(ninfer_qwen3_5_dflash_round_bench
+  models/qwen3_5/dflash_round_bench.cpp)
+target_include_directories(ninfer_qwen3_5_dflash_round_bench PRIVATE
   ${PROJECT_SOURCE_DIR}/include
   ${PROJECT_SOURCE_DIR}/src
-  ${PROJECT_SOURCE_DIR}/third_party
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export)
-target_link_libraries(ninfer_qwen3_6_35b_a3b_dflash_round_bench PRIVATE
+  ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninfer_qwen3_5_dflash_round_bench PRIVATE
   ninfer_engine ninfer_core)
 
 ninfer_add_op_bench(ninfer_q4_linear_swiglu_variants_bench SOURCES ops/q4_linear_swiglu_variants_bench.cu)

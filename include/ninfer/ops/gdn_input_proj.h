@@ -52,8 +52,8 @@ void gdn_input_proj(const Tensor& x, const Weight& qk_weight, const Weight& valu
  *   [2048,2048,6144,6144].
  *
  * The first three ranges are written contiguously to qkv and the final range is written to z.
- * Q8 admits A16 only. NVFP4 admits A16Only and AllowA4; AllowA4 permits private activation
- * quantization at every positive T. FP8 admits A16Only and AllowA8 at every positive T; AllowA8
+ * Q8 uses A16 under every policy. NVFP4 uses A16 under A16Only/AllowA8; AllowA4 permits
+ * private activation quantization at every positive T. FP8 accepts all policies; AllowA8/AllowA4
  * selects A16 through T=7 and private activation quantization followed by A8 Tensor Core
  * contraction at every T>=8. Every route writes the two independent final allocations directly.
  * The complete projection is evaluated against the same exact-decode/naive-FP64 oracle;
@@ -145,14 +145,14 @@ void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& qk_weight,
 /**
  * Single-parent form of gdn_input_proj_conv_snapshot. Registered parents are Q8_G32_FP16 RowSplit
  * [12288,2048], NVFP4 BlockScaleK16M128x4 [16384,5120], and FP8_E4M3FN_ROW_BF16 RowScale
- * [16384,5120], all in q/k/value/z row order. Q8 admits A16Only, NVFP4 admits A16Only/AllowA4,
- * and FP8 admits A16Only/AllowA8. B=1 accepts every positive W for FP8; the batched domain is
- * B=2..8 and W=1..16. For FP8 B=1, A16 is fused at W=1..3 and W=7..10 and materialized
- * otherwise; AllowA8 uses the same winners through W=9 and A8 from W=10. Batched AllowA8 uses A8
- * when B*W>=9. Tensor operands, the complete FP8 parent, and live workspace must be mutually
- * non-overlapping, except that the read-only initial_state_slots and snapshot_base_slots selectors
- * may alias each other; same-row state-slot overlap remains governed by the snapshot state
- * contract.
+ * [16384,5120], all in q/k/value/z row order. All policies permit Q8 A16. NVFP4 uses A16
+ * under A16Only/AllowA8; AllowA4 may use A4. FP8 may use A8 under AllowA8/AllowA4. B=1 accepts
+ * every positive W for FP8; the batched domain is B=2..8 and W=1..16. For FP8 B=1, A16 is fused at
+ * W=1..3 and W=7..10 and materialized otherwise; AllowA8 uses the same winners through W=9 and A8
+ * from W=10. Batched AllowA8 uses A8 when B*W>=9. Tensor operands, the complete FP8 parent, and
+ * live workspace must be mutually non-overlapping, except that the read-only initial_state_slots
+ * and snapshot_base_slots selectors may alias each other; same-row state-slot overlap remains
+ * governed by the snapshot state contract.
  */
 void gdn_input_proj_conv_snapshot(const Tensor& x, const Weight& query_key_value_z_weight,
                                   const Tensor& conv_weight, Tensor& conv_states,
@@ -220,10 +220,10 @@ void gdn_input_proj_conv_record(const Tensor& x, const Weight& qk_weight,
 
 /**
  * Single-parent record-producing form. Registered parents are Q8_G32_FP16 [12288,2048], NVFP4
- * [16384,5120], and FP8_E4M3FN_ROW_BF16 [16384,5120]. Q8 admits A16Only, NVFP4 admits
- * A16Only/AllowA4, and FP8 admits A16Only/AllowA8. Record and snapshot share arithmetic route
- * selection. Every tensor operand, the complete FP8 parent, and live workspace must be mutually
- * non-overlapping.
+ * [16384,5120], and FP8_E4M3FN_ROW_BF16 [16384,5120]. All policies permit Q8 A16; NVFP4
+ * uses A16 under A16Only/AllowA8 and may use A4 under AllowA4. FP8 may use A8 under
+ * AllowA8/AllowA4. Record and snapshot share arithmetic route selection. Every tensor operand, the
+ * complete FP8 parent, and live workspace must be mutually non-overlapping.
  */
 void gdn_input_proj_conv_record(const Tensor& x, const Weight& query_key_value_z_weight,
                                 const Tensor& conv_weight, const Tensor& conv_states,

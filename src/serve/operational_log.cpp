@@ -486,12 +486,11 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                    product::format_pretty_bytes(memory.kv_capacity_headroom_bytes),
                    product::format_pretty_bytes(memory.planned_slack_bytes),
                    product::format_pretty_bytes(memory.cuda_graph_allowance_bytes));
-    logger_->debug("context cost | transfer {} | prefill {} | profile {}/{}/{}",
+    logger_->debug("context cost | transfer {} | prefill {} | hardware {} | prefill signature {}",
                    ninfer::context_cost_preset_source_name(context_cost.transfer_source),
                    ninfer::context_cost_preset_source_name(context_cost.prefill_source),
                    product::format_pretty_text(context_cost.hardware_class),
-                   product::format_pretty_text(context_cost.model_id),
-                   product::format_pretty_text(context_cost.weights_id));
+                   product::format_pretty_text(context_cost.prefill_signature));
 }
 
 void OperationalLog::warmup_started() const { logger_->debug("warming up"); }

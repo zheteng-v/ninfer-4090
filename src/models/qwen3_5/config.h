@@ -4,6 +4,7 @@
 #include "models/registry.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <variant>
@@ -120,6 +121,21 @@ struct DraftConfig {
     std::vector<std::uint32_t> target_layer_ids;
     std::uint32_t mask_token_id = 0;
     std::optional<DFlash2Config> dflash2;
+
+    [[nodiscard]] std::uint32_t local_layer_count() const noexcept {
+        return static_cast<std::uint32_t>(std::count(layer_types.begin(), layer_types.end(),
+                                                     DraftAttentionKind::SlidingAttention));
+    }
+
+    [[nodiscard]] std::uint32_t full_layer_count() const noexcept {
+        return num_hidden_layers - local_layer_count();
+    }
+
+    [[nodiscard]] std::uint32_t compact_layer_index(std::uint32_t layer) const {
+        const auto kind = layer_types.at(layer);
+        return static_cast<std::uint32_t>(
+            std::count(layer_types.begin(), layer_types.begin() + layer, kind));
+    }
 };
 
 struct Config {

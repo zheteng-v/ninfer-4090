@@ -27,6 +27,51 @@ namespace uni = ninfer::text::unicode_internal;
 
 constexpr std::int64_t kMaxTokenId = 1'000'000;
 
+constexpr std::string_view kQwenSplitPattern =
+    R"qwen((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)qwen";
+
+void validate_pipeline(const Json& root, const Json& model) {
+    const auto require = [](bool valid, const char* field) {
+        if (!valid) {
+            throw std::invalid_argument(std::string("tokenizer.json ") + field +
+                                        " is not supported by the Qwen tokenizer");
+        }
+    };
+    const auto type = [](const Json& value, const char* name) {
+        return value.is_object() && value.contains("type") && value["type"] == name;
+    };
+    // Omitted pipeline descriptions use the architecture's fixed tokenizer semantics.
+    // An explicit description must agree with the implemented transformations.
+    if (root.contains("normalizer")) { require(type(root["normalizer"], "NFC"), "normalizer"); }
+    if (root.contains("pre_tokenizer")) {
+        const auto& pre = root["pre_tokenizer"];
+        require(type(pre, "Sequence") && pre.contains("pretokenizers") &&
+                    pre["pretokenizers"].is_array() && pre["pretokenizers"].size() == 2,
+                "pre_tokenizer");
+        const auto& split = pre["pretokenizers"][0];
+        const auto& bytes = pre["pretokenizers"][1];
+        require(type(split, "Split") && split.contains("pattern") && split["pattern"].is_object() &&
+                    split["pattern"].value("Regex", std::string{}) == kQwenSplitPattern &&
+                    split.value("behavior", std::string{}) == "Isolated" &&
+                    split.value("invert", Json(false)) == false,
+                "pre_tokenizer.Split");
+        require(type(bytes, "ByteLevel") && bytes.value("add_prefix_space", Json(true)) == false &&
+                    bytes.value("use_regex", Json(true)) == false,
+                "pre_tokenizer.ByteLevel");
+    }
+    if (root.contains("decoder")) { require(type(root["decoder"], "ByteLevel"), "decoder"); }
+    if (root.contains("post_processor") && !root["post_processor"].is_null()) {
+        require(type(root["post_processor"], "ByteLevel"), "post_processor");
+    }
+    if (model.contains("dropout") && !model["dropout"].is_null()) {
+        require(model["dropout"].is_number() && model["dropout"] == 0, "model.dropout");
+    }
+    for (const char* field : {"continuing_subword_prefix", "end_of_word_suffix"}) {
+        require(!model.contains(field) || model[field].is_null() || model[field] == "", field);
+    }
+    require(model.value("ignore_merges", Json(false)) == false, "model.ignore_merges");
+}
+
 struct VocabMetadata {
     std::vector<std::string> id_to_token;
     std::unordered_map<std::string, int> token_to_id;
@@ -748,6 +793,7 @@ Tokenizer::Tokenizer(TokenizerResources resources) {
     const Json tokenizer_config =
         read_json_asset(resources.tokenizer_config_json, tokenizer_config_label);
     const Json& model = require_object_field(root, "model", tokenizer_label);
+    validate_pipeline(root, model);
 
     VocabMetadata vocab_metadata = load_vocab(model, tokenizer_label);
     decoded_token_bytes_         = std::move(vocab_metadata.id_to_token);

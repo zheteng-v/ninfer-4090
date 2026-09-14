@@ -5,7 +5,7 @@
 namespace ninfer::models::qwen3_5 {
 
 void parse_resources(FrontendResources& resources, const Config& config) {
-    resources.tokenizer = std::make_unique<const frontend::Tokenizer>(
+    resources.tokenizer = std::make_shared<const frontend::Tokenizer>(
         frontend::TokenizerResources{resources.tokenizer_json, resources.tokenizer_config_json,
                                      resources.generation_config_json});
     const auto count = resources.tokenizer->vocab_size();

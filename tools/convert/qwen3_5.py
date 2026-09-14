@@ -52,6 +52,25 @@ def _fixed(config, key, value, label):
         raise ValueError(f"{label}.{key}: expected {value!r}, got {config[key]!r}")
 
 
+def _rope_source(raw: dict, label: str) -> dict:
+    rope = {}
+    for field in ("rope_scaling", "rope_parameters"):
+        value = raw.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"{label}.{field}: expected an object")
+        for alias in ("type", "rope_type"):
+            _fixed(value, alias, "default", label + "." + field)
+        if "factor" in value and _f32(value["factor"], label + ".factor") != 1.0:
+            raise ValueError(f"{label}: scaled RoPE is not implemented")
+        for key, item in value.items():
+            if key in rope and rope[key] != item:
+                raise ValueError(f"{label}: conflicting RoPE field {key}")
+            rope[key] = item
+    return rope
+
+
 def text_config(source: dict, *, mtp: bool) -> dict:
     architectures = source.get("architectures")
     if (
@@ -102,8 +121,7 @@ def text_config(source: dict, *, mtp: bool) -> dict:
             result[key] = _positive(raw.get(key), "text." + key)
         if result["num_attention_heads"] % result["num_key_value_heads"]:
             raise ValueError("text attention heads must be divisible by KV heads")
-        rope = raw.get("rope_parameters", raw.get("rope_scaling", {}))
-        _fixed(rope, "rope_type", "default", "text.rope_parameters")
+        rope = _rope_source(raw, "text")
         _fixed(rope, "mrope_interleaved", True, "text.rope_parameters")
         factor = _f32(
             rope.get("partial_rotary_factor", raw.get("partial_rotary_factor", 0.25)),
@@ -231,8 +249,7 @@ def draft_config(raw: dict, target: dict, backend: str) -> dict:
     result["rms_norm_eps"] = _f32(
         raw.get("rms_norm_eps", 1e-6), backend + ".rms_norm_eps"
     )
-    rope = raw.get("rope_parameters", {})
-    _fixed(rope, "rope_type", "default", backend + ".rope_parameters")
+    rope = _rope_source(raw, backend)
     result["rope_parameters"] = {
         "rope_theta": _f32(
             rope.get("rope_theta", raw.get("rope_theta", 10_000_000)),
@@ -241,13 +258,15 @@ def draft_config(raw: dict, target: dict, backend: str) -> dict:
     }
     layers = raw.get("layer_types")
     if layers is None:
-        count = (
-            raw.get("max_window_layers", result["num_hidden_layers"])
-            if raw.get("use_sliding_window", False)
-            else 0
-        )
+        enabled = raw.get("use_sliding_window", False)
+        if type(enabled) is not bool:
+            raise ValueError(f"{backend}.use_sliding_window must be boolean")
+        # Qwen3Config applies sliding attention at and above this layer index.
+        threshold = raw.get("max_window_layers", 28)
+        if type(threshold) is not int or threshold < 0:
+            raise ValueError(f"{backend}.max_window_layers must be nonnegative")
         layers = [
-            "sliding_attention" if i < count else "full_attention"
+            "sliding_attention" if enabled and i >= threshold else "full_attention"
             for i in range(result["num_hidden_layers"])
         ]
     if (
@@ -301,9 +320,118 @@ def draft_config(raw: dict, target: dict, backend: str) -> dict:
     return result
 
 
+def _has_model_config(source: SafetensorsSource) -> bool:
+    return bool(
+        source.config.keys()
+        - {
+            "quantization_config",
+            "_name_or_path",
+            "transformers_version",
+            "torch_dtype",
+            "dtype",
+        }
+    )
+
+
+def _check_source_fields(name, actual, expected, fields):
+    for field in sorted(fields):
+        if actual.get(field) != expected.get(field):
+            raise ValueError(
+                f"{name}: additional source {field} differs; provide an explicit logical source"
+            )
+
+
 class _Builder:
     def __init__(self, model: Model):
         self.model = model
+
+    def validate_source(self, selected, original, name):
+        if selected is original or not _has_model_config(selected):
+            return
+        component = name.split("/", 1)[0]
+        target = self.model.config
+        if component in ("text", "mtp"):
+            actual = text_config(selected.config, mtp=component == "mtp")
+            expected = target
+            fields = {"hidden_size"}
+            if name.endswith(("token_embedding", "output_head")):
+                fields.add("vocab_size")
+            if name == "text/output_head":
+                fields.add("tie_word_embeddings")
+            if "/attention/" in name:
+                fields.update(
+                    ("num_attention_heads", "num_key_value_heads", "head_dim")
+                )
+            if "/gdn/" in name:
+                fields.update(
+                    (
+                        "linear_num_key_heads",
+                        "linear_key_head_dim",
+                        "linear_num_value_heads",
+                        "linear_value_head_dim",
+                    )
+                )
+                if name.endswith("/convolution"):
+                    fields.add("linear_conv_kernel_dim")
+            if "/mlp/" in name:
+                fields.add("intermediate_size")
+            if "/moe/experts/" in name:
+                fields.update(("num_experts", "moe_intermediate_size"))
+            if "/moe/shared/" in name:
+                fields.add("shared_expert_intermediate_size")
+            if name.endswith("/moe/router"):
+                fields.add("num_experts")
+        elif component == "vision":
+            actual = vision_config(selected.config, target)
+            expected = self.model.components[component]["config"]
+            fields = {"hidden_size"}
+            if "/attention/" in name:
+                fields.add("num_heads")
+            if "/mlp/" in name:
+                fields.add("intermediate_size")
+            if name == "vision/patch_embedding":
+                fields.update(("patch_size", "temporal_patch_size"))
+            if name.startswith("vision/merger/fc"):
+                fields.add("spatial_merge_size")
+            if "position_embedding" in name:
+                fields.add("num_position_embeddings")
+        else:
+            actual = draft_config(selected.config, target, component)
+            expected = self.model.components[component]["config"]
+            fields = set()
+            if "/attention/" in name:
+                fields.update(
+                    ("num_attention_heads", "num_key_value_heads", "head_dim")
+                )
+            if "/mlp/" in name:
+                fields.add("intermediate_size")
+            draft_fields = set()
+            if name.endswith("/feature_projection"):
+                draft_fields.add("target_layer_ids")
+            if "conv/" in name:
+                draft_fields.add("conv_kernel_size")
+                if name.endswith("/kernel_projection"):
+                    draft_fields.add("conv_group_size")
+            if "/candidate_selector/" in name:
+                draft_fields.add("selector_rank")
+            _check_source_fields(
+                name, actual["dflash_config"], expected["dflash_config"], draft_fields
+            )
+        if "/layers/" in name:
+            index = int(name.split("/layers/", 1)[1].split("/", 1)[0])
+            if component == "vision":
+                compatible = index < actual["depth"]
+            elif component == "mtp":
+                compatible = index == 0
+            else:
+                compatible = index < len(actual["layer_types"]) and (
+                    actual["layer_types"][index] == expected["layer_types"][index]
+                )
+            if not compatible:
+                raise ValueError(
+                    f"{name}: additional source layer topology differs; provide an explicit logical source"
+                )
+        _check_source_fields(name, actual, expected, fields)
 
     def add(
         self,
@@ -323,18 +451,31 @@ class _Builder:
         original = shape if source_shape is None else tuple(source_shape)
 
         def factory(selected, format=None):
+            self.validate_source(selected, store, name)
+            selected_name = source_name
+            if name.startswith("text/") and _has_model_config(selected):
+                if "text_config" not in selected.config:
+                    selected_name = selected_name.replace(
+                        "model.language_model.", "model.", 1
+                    )
+                elif "text_config" not in store.config and selected_name.startswith(
+                    "model."
+                ):
+                    selected_name = selected_name.replace(
+                        "model.", "model.language_model.", 1
+                    )
             if transpose is not None:
                 if format is not None:
                     raise ValueError(f"{name}: transpose source requires value access")
-                ref = tensor_source(selected, source_name, original)
+                ref = tensor_source(selected, selected_name, original)
                 return transpose_source(ref, transpose, shape)
             if len(original) == 2 and offset == 0:
-                ref = matrix_source(selected, source_name, original, format)
+                ref = matrix_source(selected, selected_name, original, format)
                 return select_rows(ref, rows) if rows is not None else ref
             if format is not None:
                 raise ValueError(f"{name}: provide an explicit encoded source mapping")
             return tensor_source(
-                selected, source_name, shape, offset=offset, source_shape=original
+                selected, selected_name, shape, offset=offset, source_shape=original
             )
 
         self.model.add(
@@ -800,8 +941,8 @@ def build_model(
             }
     refs, resources, count, special = load_resources(
         base.root,
-        vision="vision" in selected,
         vocab_size=config["vocab_size"],
+        vision_config=records["vision"]["config"] if "vision" in selected else None,
         overrides=resource_overrides,
     )
     for component, resource_refs in refs.items():

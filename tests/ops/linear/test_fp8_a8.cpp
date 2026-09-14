@@ -13,7 +13,7 @@ using namespace ninfer::test::linear;
 int run_fp8_a8() {
     constexpr std::array attn_invocations{
         Invocation{12, CallForm::Policy, ops::LinearPolicy::AllowA8},
-        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA8},
+        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA4},
         Invocation{64, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{65, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{1023, CallForm::Policy, ops::LinearPolicy::AllowA8},
@@ -23,7 +23,7 @@ int run_fp8_a8() {
                              {14336, 5120, 829U, Comparison::Sampled, true, attn_invocations});
     constexpr std::array gdn_invocations{
         Invocation{11, CallForm::Policy, ops::LinearPolicy::AllowA8},
-        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA8},
+        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA4},
         Invocation{65, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{1024, CallForm::Policy, ops::LinearPolicy::AllowA8},
     };
@@ -32,7 +32,7 @@ int run_fp8_a8() {
     constexpr std::array mlp_invocations{
         Invocation{1, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{5, CallForm::Policy, ops::LinearPolicy::AllowA8},
-        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA8},
+        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA4},
         Invocation{65, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{1024, CallForm::Policy, ops::LinearPolicy::AllowA8},
     };
@@ -41,7 +41,7 @@ int run_fp8_a8() {
 
     constexpr std::array residual6144_invocations{
         Invocation{25, CallForm::Policy, ops::LinearPolicy::AllowA8},
-        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA8},
+        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA4},
         Invocation{65, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{1024, CallForm::Policy, ops::LinearPolicy::AllowA8},
     };
@@ -49,7 +49,7 @@ int run_fp8_a8() {
                           {5120, 6144, 857U, Comparison::Sampled, true, residual6144_invocations});
     constexpr std::array residual17408_invocations{
         Invocation{25, CallForm::Policy, ops::LinearPolicy::AllowA8},
-        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA8},
+        Invocation{48, CallForm::Policy, ops::LinearPolicy::AllowA4},
         Invocation{65, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{1024, CallForm::Policy, ops::LinearPolicy::AllowA8},
     };

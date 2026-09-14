@@ -39,9 +39,6 @@ std::size_t linear_swiglu_workspace_capacity_bytes(QType qtype, std::int32_t gat
         throw std::invalid_argument("linear_swiglu workspace: invalid profile or token interval");
     }
     if (qtype == QType::Q8_G32_FP16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("linear_swiglu workspace: Q8 admits only A16");
-        }
         (void)detail::q8_linear_swiglu_resolve_plan(
             {gate_up_rows, gate_up_rows / 2, input_rows, input_rows, min_tokens});
         (void)detail::q8_linear_swiglu_resolve_plan(
@@ -49,9 +46,6 @@ std::size_t linear_swiglu_workspace_capacity_bytes(QType qtype, std::int32_t gat
         return 0;
     }
     if (qtype == QType::Q4_G64_FP16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("linear_swiglu workspace: Q4 admits only A16");
-        }
         return detail::q4_linear_swiglu_capacity_workspace_bytes(
             gate_up_rows, gate_up_rows / 2, input_rows, input_rows, min_tokens, max_tokens);
     }
@@ -126,9 +120,6 @@ void linear_swiglu(const Tensor& x, const Weight& gate_up_weight, Tensor& out, L
         return;
     }
 
-    if (policy != LinearPolicy::A16Only) {
-        throw std::invalid_argument("linear_swiglu: Q4/Q8 admit only A16");
-    }
     if (!aligned_to(gate_up_weight.qdata, 16) ||
         !aligned_to(gate_up_weight.scales, q8_weight ? 16 : 4)) {
         throw std::invalid_argument("linear_swiglu: required code/scale alignment is missing");

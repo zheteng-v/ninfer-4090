@@ -17,7 +17,7 @@ struct FrontendResources {
     std::string_view generation_config_json;
     std::string_view preprocessor_config_json;
     std::string_view video_preprocessor_config_json;
-    std::unique_ptr<const frontend::Tokenizer> tokenizer;
+    std::shared_ptr<const frontend::Tokenizer> tokenizer;
     std::uint32_t public_token_count = 0;
 };
 

@@ -22,15 +22,15 @@ enum class Nvfp4LinearSwiGluRoute {
     TmaFusedW4A4,
 };
 
-constexpr std::int32_t kTmaBlockM = 256;
+constexpr std::int32_t kTmaBlockM      = 256;
 constexpr std::int32_t kFusedMaxTokens = 128;
 
 Nvfp4LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("nvfp4 linear_swiglu: T must be positive"); }
-    if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4) {
-        throw std::invalid_argument("nvfp4 linear_swiglu admits only A16 or A4");
+    if (!valid_linear_policy(policy)) {
+        throw std::invalid_argument("nvfp4 linear_swiglu: invalid compute policy");
     }
-    if (policy == LinearPolicy::A16Only) {
+    if (policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8) {
         if (tokens == 1) { return Nvfp4LinearSwiGluRoute::DecodeFusedA16; }
         if (tokens <= 16) { return Nvfp4LinearSwiGluRoute::SmallTFusedA16; }
         throw std::invalid_argument("nvfp4 linear_swiglu A16 is registered only through T=16");
@@ -88,7 +88,9 @@ std::size_t nvfp4_linear_swiglu_workspace_capacity_bytes(LinearPolicy policy,
     }
     (void)resolve_route(policy, min_tokens);
     (void)resolve_route(policy, max_tokens);
-    if (policy == LinearPolicy::A16Only || max_tokens <= 4) { return 0; }
+    if ((policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8) || max_tokens <= 4) {
+        return 0;
+    }
 
     std::size_t maximum = 0;
     if (min_tokens <= kFusedMaxTokens && max_tokens >= 5) {

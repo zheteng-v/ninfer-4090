@@ -89,23 +89,22 @@ int main() {
     };
 
     ninfer::LoadSummary load;
-    load.target               = "qwen3_6_27b";
-    load.model_id             = "qwen3.6-27b";
-    load.weights_id           = "groupwise-int";
+    load.architecture         = "Qwen3_5ForCausalLM";
+    load.model_name           = "qwen3.6-27b";
+    load.weight_formats       = {"q4_g64_fp16", "q8_g32_fp16"};
     load.load_seconds         = 1.234567890123;
     load.upload_seconds       = 0.345678901234;
     load.artifact_bytes_read  = 1000;
     load.host_to_device_bytes = 900;
     load.peak_staging_bytes   = 128;
-    load.tensor_count         = 42;
-    load.resource_count       = 6;
+    load.device_object_count  = 42;
+    load.host_object_count    = 6;
     load.context_cost         = {
-                .transfer_source = ninfer::ContextCostPresetSource::External,
-                .prefill_source  = ninfer::ContextCostPresetSource::CompiledDefault,
-                .hardware_class  = "nvidia-geforce-rtx-5090-sm120",
-                .model_id        = "qwen3.6-27b",
-                .weights_id      = "groupwise-int",
-                .preset_path     = "local-costs.json",
+                .transfer_source   = ninfer::ContextCostPresetSource::External,
+                .prefill_source    = ninfer::ContextCostPresetSource::CompiledDefault,
+                .hardware_class    = "nvidia-geforce-rtx-5090-sm120",
+                .prefill_signature = "example-prefill-signature",
+                .preset_path       = "local-costs.json",
     };
 
     ninfer::MemorySummary memory;
@@ -162,9 +161,11 @@ int main() {
     failures += check(server.at("event") == "server_start", "server event mismatch");
     failures += check(server.at("server").at("public_model_id") == "deployment-alias",
                       "resolved public model id missing");
-    failures += check(server.at("artifact").at("target") == "qwen3_6_27b", "server target missing");
-    failures += check(server.at("artifact").at("weights_id") == "groupwise-int",
-                      "server weights id missing");
+    failures += check(server.at("artifact").at("architecture") == "Qwen3_5ForCausalLM",
+                      "server target missing");
+    failures +=
+        check(server.at("artifact").at("formats") == Json::array({"q4_g64_fp16", "q8_g32_fp16"}),
+              "server weights id missing");
     failures += check(server.at("artifact").at("size_bytes") == 123456, "artifact size missing");
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
     failures += check(server.at("engine").at("kv_capacity") == 524288, "KV capacity missing");

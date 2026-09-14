@@ -163,9 +163,8 @@ Q8Launch select_q8_launch(std::int32_t n, std::int32_t k, std::int32_t t, Linear
     switch (policy) {
     case LinearPolicy::A16Only:
     case LinearPolicy::AllowA8:
-        return select_q8_a16_launch(n, k, t);
     case LinearPolicy::AllowA4:
-        break;
+        return select_q8_a16_launch(n, k, t);
     }
     throw std::invalid_argument("q8 linear: unsupported policy");
 }

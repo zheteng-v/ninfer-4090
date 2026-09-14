@@ -53,8 +53,9 @@ namespace ninfer::ops {
  *   rounding boundaries.
  *
  * Compute policy:
- *   Q5, Q8, and BF16 admit only A16Only. NVFP4 admits A16Only and AllowA4. Row-scaled FP8
- *   admits A16Only and AllowA8. Each registration owns its production plan. A permissive policy
+ *   All policies permit the A16 implementations of Q5, Q8 and BF16. NVFP4 uses A16 for
+ *   A16Only/AllowA8 and may use A4 under AllowA4. FP8 may use A8 under AllowA8/AllowA4.
+ *   Each registration owns its production plan. A permissive policy
  *   allows the private resolver to select either qualified
  *   arithmetic profile; it does not itself prescribe a kernel.
  *

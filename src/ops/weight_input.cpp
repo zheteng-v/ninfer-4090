@@ -87,19 +87,27 @@ SingleProjectionWeight single(std::span<const WeightInput> inputs) {
                     region.parent->weight_scale_divisor > 0,
                 "NVFP4 parent requires a positive weight divisor");
         for (const auto& input : inputs) {
-            require(input.activation_input_divisor &&
-                        std::isfinite(*input.activation_input_divisor) &&
+            if (!input.activation_input_divisor) {
+                require(!allows_a4(policy), "NVFP4 A4 native input requires an activation divisor");
+                continue;
+            }
+            require(std::isfinite(*input.activation_input_divisor) &&
                         *input.activation_input_divisor > 0,
                     "NVFP4 native input requires a positive activation divisor");
             if (divisor == 0) {
                 // A16 does not read this auxiliary; retain a stored positive value for the ABI.
                 divisor = *input.activation_input_divisor;
-            } else if (policy != LinearPolicy::A16Only) {
+            } else if (allows_a4(policy)) {
+                // Current NVFP4 consumers use A16 for AllowA8 as well. Only their A4 route
+                // quantizes the shared activation and therefore requires a common divisor.
                 require(std::bit_cast<std::uint32_t>(divisor) ==
                             std::bit_cast<std::uint32_t>(*input.activation_input_divisor),
                         "shared NVFP4 native input requires identical activation divisors");
             }
         }
+        // The legacy native ABI validates this field even on A16, where it is never read.
+        // Keep that ABI detail out of the artifact's optional Use auxiliaries.
+        if (divisor == 0) { divisor = 1.0F; }
     }
     return {native_weight(view, divisor), policy};
 }

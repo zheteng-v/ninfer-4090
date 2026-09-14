@@ -1,8 +1,6 @@
 #include "serve/serve_options.h"
 #include "product/speculative_options.h"
 
-#include <algorithm>
-
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -52,10 +50,6 @@ KvCacheStorage parse_kv_dtype(const char* text) {
     if (value == "bf16") { return KvCacheStorage::BFloat16; }
     if (value == "int8") { return KvCacheStorage::Int8Group64; }
     if (value == "fp8") { return KvCacheStorage::Fp8E4M3Row256; }
-    if (value == "rk8v4") { return KvCacheStorage::RotatedInt8KeyInt4ValueGroup64; }
-    if (value == "rk4v4") { return KvCacheStorage::RotatedInt4KeyInt4ValueGroup64; }
-    if (value == "rk4v4-e8") { return KvCacheStorage::RK4V4E8; }
-    if (value == "rk2v4-e8") { return KvCacheStorage::RK2V4E8; }
     if (value == "nvfp4") { return KvCacheStorage::Nvfp4Group16; }
     if (value == "k8v4") { return KvCacheStorage::Fp8KeyNvfp4Value; }
     throw std::invalid_argument("invalid kv-dtype: " + value);
@@ -75,20 +69,18 @@ std::string serve_usage_text(const char* argv0) {
            " <model.ninfer> [--host H] [--port N] [--api-key KEY] "
            "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--max-concurrency N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
-           "[--prefill-chunk N] [--turn-checkpoints N (retired)] [--log-stats-interval-ms N] "
-           "[--device N] "
+           "[--prefill-chunk N] [--log-stats-interval-ms N] [--device N] "
            "[--context-cost-presets FILE] "
            "[--max-request-mib N] [--media-cache-mib N] [--media-live-mib N] "
            "[--media-preprocess-threads N] "
            "[--device-state-slots N] [--host-state-slots N] [--host-kv-mib N] "
            "[--max-private-continuations N] [--max-shared-prefixes N] "
-           "[--max-long-anchors-per-continuation N] [--auto-long-anchors N] "
-           "[--request-log-jsonl FILE] [--slot-save-path DIR] [--auto-save-evicted] "
+           "[--max-long-anchors-per-continuation N] "
+           "[--request-log-jsonl FILE] "
            "[--response-store-max-records N] [--response-store-max-mib N] "
-           "[--kv-dtype bf16|int8|fp8|nvfp4|k8v4|rk8v4|rk4v4|rk4v4-e8|rk2v4-e8] "
-           "[--spec mtp|dflash|dflash2 --draft-tokens N] "
+           "[--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--spec mtp|dflash|dflash2 --draft-tokens N] "
            "[--default-max-tokens N] [--default-thinking-budget N] "
-           "[--vision] [--vision-max-tokens N] [--no-cuda-graph] [--no-prefix-reuse] "
+           "[--vision] [--no-cuda-graph] [--no-prefix-reuse] "
            "[--lm-head-draft] [--no-thinking] [--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
@@ -102,30 +94,11 @@ std::string serve_usage_text(const char* argv0) {
            "       --media-live-mib defaults to 2048 and bounds all live BF16 patch payloads\n"
            "       --media-preprocess-threads defaults to 0 (auto, at most 16 workers)\n"
            "       --request-log-jsonl appends full-precision server/request records\n"
-           "       --slot-save-path enables llama.cpp-style session persistence: POST "
-           "/slots/{id}?action=save|restore|erase with {\"filename\": NAME} moves one idle "
-           "slot's resident session to or from DIR (disabled when omitted)\n"
-           "       --turn-checkpoints is RETIRED and has no effect. Per-sequence rewrite "
-           "checkpoints and long anchors serve the same mid-history divergence, sized by "
-           "--max-long-anchors-per-continuation and placed by --auto-long-anchors; the value is "
-           "accepted and ignored so existing command lines keep starting, and the flag goes "
-           "away in a later release\n"
-           "       --auto-long-anchors N proposes a private long anchor at each of the last N "
-           "message boundaries of every prompt, so a client that rewrites recent history "
-           "restores at the anchor below the edit instead of re-prefilling from zero; coverage "
-           "reaches back only as far as the retained cap (the shallowest anchor is evicted when "
-           "the set is full), so raise it with --max-long-anchors-per-continuation and "
-           "--host-state-slots for deeper edits; defaults to the cap and is clamped to it; "
-           "0 disables (anchors then need explicit markers, which no HTTP protocol can place)\n"
-           "       --auto-save-evicted spills an involuntarily evicted session back to the "
-           "slot file it was last saved to or restored from, before the eviction destroys it "
-           "(requires --slot-save-path; explicit erase never auto-saves)\n"
-           "       --model-id overrides the artifact identity.model_id reported by the server\n"
+           "       --model-id overrides the artifact metadata.name reported by the server\n"
            "       Responses state is process-local and bounded to 1024 records / 256 MiB by "
            "default\n"
            "       --log-stats-interval-ms defaults to 5000; 0 disables periodic throughput logs\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
-           "       --vision-max-tokens sets the Vision scratchpad token capacity (default 8192)\n"
            "       --kv-capacity auto leaves " +
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom\n"
@@ -199,15 +172,6 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--prefill-chunk"), "prefill-chunk"));
-        } else if (arg == "--turn-checkpoints") {
-            // Retired, but still accepted: the deployed container line passes it, and an
-            // unknown argument is fatal below. The value is validated and dropped; main()
-            // warns once. Remove the flag, this branch and the dead field together, one
-            // release after the warning ships.
-            (void)parse_nonnegative_int(require_value("--turn-checkpoints"), "turn-checkpoints");
-            options.deprecated_turn_checkpoints_given = true;
-        } else if (arg == "--auto-save-evicted") {
-            options.auto_save_evicted = true;
         } else if (arg == "--context-cost-presets") {
             options.context_cost_presets = require_value("--context-cost-presets");
             if (options.context_cost_presets.empty()) {
@@ -274,18 +238,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 parse_nonnegative_int(require_value("--max-long-anchors-per-continuation"),
                                       "max-long-anchors-per-continuation"));
             context_capacity_explicit = true;
-        } else if (arg == "--auto-long-anchors") {
-            options.auto_long_anchors = static_cast<std::uint32_t>(
-                parse_nonnegative_int(require_value("--auto-long-anchors"), "auto-long-anchors"));
         } else if (arg == "--request-log-jsonl") {
             options.request_log_jsonl = require_value("--request-log-jsonl");
             if (options.request_log_jsonl.empty()) {
                 throw std::invalid_argument("--request-log-jsonl must not be empty");
-            }
-        } else if (arg == "--slot-save-path") {
-            options.slot_save_path = require_value("--slot-save-path");
-            if (options.slot_save_path.empty()) {
-                throw std::invalid_argument("--slot-save-path must not be empty");
             }
         } else if (arg == "--response-store-max-records") {
             const int records = parse_nonnegative_int(require_value("--response-store-max-records"),
@@ -324,13 +280,6 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.default_thinking_budget = static_cast<std::uint32_t>(budget);
         } else if (arg == "--vision") {
             options.enable_vision = true;
-        } else if (arg == "--vision-max-tokens" || arg == "--vision-limit") {
-            const int val = parse_nonnegative_int(require_value(arg.c_str()), "vision-max-tokens");
-            if (val <= 0) {
-                throw std::invalid_argument(std::string(arg) + " must be positive");
-            }
-            options.vision_max_tokens = static_cast<std::uint32_t>(val);
-            options.enable_vision     = true;
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--no-prefix-reuse") {
@@ -375,9 +324,6 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     if (!kv_capacity_explicit) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
     }
-    if (options.auto_save_evicted && options.slot_save_path.empty()) {
-        throw std::invalid_argument("--auto-save-evicted requires --slot-save-path");
-    }
     if (!options.allow_prefix_reuse) {
         if (context_capacity_explicit) {
             throw std::invalid_argument(
@@ -386,7 +332,6 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         options.context_cache.enabled                = false;
         options.context_cache.host_state_slots       = 0;
         options.context_cache.host_kv_capacity_bytes = 0;
-        options.auto_long_anchors                    = 0;
     }
     if (options.port <= 0 || options.port > 65535) {
         throw std::invalid_argument("--port must be in [1,65535]");
@@ -421,19 +366,12 @@ ServeOptions parse_serve_options(int argc, char** argv) {
 }
 
 std::string resolve_public_model_id(const ServeOptions& options,
-                                    std::string_view artifact_model_id) {
+                                    std::string_view artifact_model_name) {
     if (options.model_id_override.has_value()) { return *options.model_id_override; }
-    if (artifact_model_id.empty()) {
-        throw std::logic_error("loaded artifact model_id must not be empty");
+    if (artifact_model_name.empty()) {
+        throw std::logic_error("loaded artifact model name must not be empty");
     }
-    return std::string(artifact_model_id);
-}
-
-std::uint32_t resolve_automatic_private_anchors(const ServeOptions& options,
-                                                const ContextCacheOptions& resolved) {
-    if (!resolved.enabled || !options.allow_prefix_reuse) { return 0; }
-    const std::uint32_t cap = resolved.max_long_anchors_per_continuation.value_or(0U);
-    return std::min(options.auto_long_anchors.value_or(cap), cap);
+    return std::string(artifact_model_name);
 }
 
 } // namespace ninfer::serve

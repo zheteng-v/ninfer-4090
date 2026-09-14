@@ -7,6 +7,12 @@
 
 namespace ninfer::ops {
 
+// Validates the native weight pair and inclusive T interval. Existing routes use no scratch.
+[[nodiscard]] std::size_t linear_pair_workspace_capacity_bytes(const Weight& first_weight,
+                                                               const Weight& second_weight,
+                                                               std::int32_t min_tokens,
+                                                               std::int32_t max_tokens);
+
 /**
  * Computes two same-shaped projections of one input:
  *

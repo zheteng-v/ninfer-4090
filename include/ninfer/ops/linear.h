@@ -24,6 +24,19 @@ enum class LinearPolicy : std::uint8_t {
     AllowA4, ///< Admit A16, A8 or A4 compute profiles.
 };
 
+[[nodiscard]] constexpr bool valid_linear_policy(LinearPolicy policy) noexcept {
+    return policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8 ||
+           policy == LinearPolicy::AllowA4;
+}
+
+[[nodiscard]] constexpr bool allows_a8(LinearPolicy policy) noexcept {
+    return policy == LinearPolicy::AllowA8 || policy == LinearPolicy::AllowA4;
+}
+
+[[nodiscard]] constexpr bool allows_a4(LinearPolicy policy) noexcept {
+    return policy == LinearPolicy::AllowA4;
+}
+
 /**
  * Returns the caller-owned transient capacity required by Linear for every T in the inclusive
  * `[min_tokens,max_tokens]` interval. Invalid registered profiles, policies, or intervals throw;
@@ -82,15 +95,15 @@ enum class LinearPolicy : std::uint8_t {
  * @par Compute policy
  * `policy` specifies the permitted private activation-compute set. A permission does not require a
  * corresponding low-precision route: the resolved plan may remain A16 when that is the qualified
- * choice. BF16 admits only LinearPolicy::A16Only. Registered Q4/Q5/Q6/Q8 formats admit
- * LinearPolicy::A16Only and LinearPolicy::AllowA8. The five non-vocabulary FP8 problems admit the
- * same two policies at every positive T. AllowA8 resolves `[14336,5120]` to A16 through T=11 and
- * A8 from T=12; `[16384,5120]` to A16 through T=10 and A8 from T=11; `[34816,5120]` to A8 at T=1,
- * A16 at T=2..4, and A8 from T=5; both `[5120,6144]` and `[5120,17408]` resolve T<25 to A16 and
- * T>=25 to A8. FP8 `[248320,5120]` admits A16Only, AllowA8, and AllowA4; every policy retains A16
- * compute at every positive T. NVFP4 admits A16Only and AllowA4; AllowA4 permits the private
- * resolver to select either a qualified A16 route or activation quantization to NVFP4 at every
- * positive T. The selected route depends only on the registered problem and T.
+ * choice. Every policy permits the existing A16 implementations of BF16 and Q4/Q5/Q6/Q8.
+ * FP8 accepts all three policies; AllowA8 and AllowA4 permit its A8 routes. Both resolve
+ * `[14336,5120]` to A16 through T=11 and A8 from T=12; `[16384,5120]` to A16 through T=10 and A8
+ * from T=11; `[34816,5120]` to A8 at T=1, A16 at T=2..4, and A8 from T=5; both `[5120,6144]` and
+ * `[5120,17408]` resolve T<25 to A16 and T>=25 to A8. FP8 `[248320,5120]` admits A16Only, AllowA8,
+ * and AllowA4; every policy retains A16 compute at every positive T. NVFP4 uses A16 for A16Only and
+ * AllowA8; AllowA4 permits the private resolver to select either a qualified A16 route or
+ * activation quantization to NVFP4 at every positive T. The selected route depends only on the
+ * registered problem and T.
  *
  * @par Workspace
  * `workspace` is caller-owned call-scoped transient storage sized by

@@ -95,9 +95,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& q, Te
         constexpr std::int32_t kRows   = 14336;
         const std::int32_t cols        = x.ne[1];
         if (cols <= 0) { throw std::invalid_argument("attn_input_proj: T must be positive"); }
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("BF16 attn_input_proj admits only A16");
-        }
         require_matrix(x, kHidden, cols, "x");
         require_matrix(q, kQRows, cols, "q");
         require_matrix(gate, kQRows, cols, "gate");
@@ -115,9 +112,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& q, Te
         constexpr std::int32_t kRows   = 14336;
         const std::int32_t cols        = x.ne[1];
         if (cols <= 0) { throw std::invalid_argument("attn_input_proj: T must be positive"); }
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4) {
-            throw std::invalid_argument("NVFP4 attn_input_proj admits only A16 or A4");
-        }
         require_matrix(x, kHidden, cols, "x");
         require_matrix(q, kQRows, cols, "q");
         require_matrix(gate, kQRows, cols, "gate");
@@ -138,9 +132,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& q, Te
         constexpr std::int32_t kRows   = 14336;
         const std::int32_t cols        = x.ne[1];
         if (cols <= 0) { throw std::invalid_argument("attn_input_proj: T must be positive"); }
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
-            throw std::invalid_argument("FP8 attn_input_proj admits only A16 or A8");
-        }
         require_matrix(x, kHidden, cols, "x");
         require_matrix(q, kQRows, cols, "q");
         require_matrix(gate, kQRows, cols, "gate");
@@ -160,9 +151,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& q, Te
     constexpr std::int32_t kRows   = 9216;
     const std::int32_t cols        = x.ne[1];
     if (cols <= 0) { throw std::invalid_argument("attn_input_proj: T must be positive"); }
-    if (policy != LinearPolicy::A16Only) {
-        throw std::invalid_argument("Q8 attn_input_proj admits only A16");
-    }
     require_matrix(x, kHidden, cols, "x");
     require_matrix(q, kQRows, cols, "q");
     require_matrix(gate, kQRows, cols, "gate");
@@ -185,14 +173,13 @@ std::size_t attn_input_proj_workspace_capacity_bytes(QType parent_qtype, std::in
 
     switch (parent_qtype) {
     case QType::BF16:
-        if (parent_rows != 14336 || input_rows != 5120 || policy != LinearPolicy::A16Only) {
+        if (parent_rows != 14336 || input_rows != 5120) {
             throw std::invalid_argument("attn_input_proj workspace: unsupported BF16 profile");
         }
         return 0;
     case QType::NVFP4:
         if (parent_rows != detail::Nvfp4AttnInputGeometry::kOutputRows ||
-            input_rows != detail::Nvfp4AttnInputGeometry::kInputRows ||
-            (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4)) {
+            input_rows != detail::Nvfp4AttnInputGeometry::kInputRows) {
             throw std::invalid_argument("attn_input_proj workspace: unsupported NVFP4 profile");
         }
         return detail::nvfp4_attn_input_workspace_capacity_bytes(policy, min_tokens, max_tokens);
@@ -203,7 +190,7 @@ std::size_t attn_input_proj_workspace_capacity_bytes(QType parent_qtype, std::in
         }
         return detail::fp8_attn_input_workspace_capacity_bytes(policy, min_tokens, max_tokens);
     case QType::Q8_G32_FP16:
-        if (parent_rows != 9216 || input_rows != 2048 || policy != LinearPolicy::A16Only) {
+        if (parent_rows != 9216 || input_rows != 2048) {
             throw std::invalid_argument("attn_input_proj workspace: unsupported Q8 profile");
         }
         (void)detail::q8_attn_input_resolve_plan(

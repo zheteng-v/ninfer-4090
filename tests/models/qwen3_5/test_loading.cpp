@@ -247,6 +247,20 @@ void native_uses() {
                 joined.weight.input_scale_divisor == 2.0F,
             "shared quantization did not intersect Uses or preserve the complete parent");
     const WeightView full{{128, 64}, {{&parent, 0, 8192}}};
+    for (const auto policy : {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8}) {
+        const auto no_aux = ops::prepare_linear_weight({full, policy});
+        require(no_aux.policy == policy && no_aux.weight.payload == bytes.data(),
+                "non-A4 NVFP4 use required an unused activation divisor");
+        const auto mixed = ops::prepare_linear_swiglu_weight(
+            {gate, ops::LinearPolicy::AllowA4, 2.0F}, {up, policy});
+        require(mixed.policy == policy, "combined use required an unused child auxiliary");
+        rejects<std::invalid_argument>(
+            [&] { (void)ops::prepare_linear_weight({full, policy, 0.0F}); },
+            "present activation divisor was accepted without value validation");
+    }
+    rejects<std::invalid_argument>(
+        [&] { (void)ops::prepare_linear_weight({full, ops::LinearPolicy::AllowA4}); },
+        "A4 NVFP4 use accepted a missing activation divisor");
     const auto a16 = ops::prepare_linear_swiglu_weight({gate, ops::LinearPolicy::A16Only, 2.0F},
                                                        {up, ops::LinearPolicy::AllowA4, 3.0F});
     require(a16.policy == ops::LinearPolicy::A16Only && a16.weight.input_scale_divisor == 2.0F,

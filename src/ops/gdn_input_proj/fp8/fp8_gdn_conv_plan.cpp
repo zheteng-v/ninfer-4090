@@ -37,8 +37,8 @@ Fp8GdnProjectedWorkspace allocate_projected(Allocator& allocator, std::int32_t c
 }
 
 void require_policy(LinearPolicy policy, const char* operation) {
-    if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
-        throw std::invalid_argument(std::string(operation) + " admits only A16 or A8");
+    if (!valid_linear_policy(policy)) {
+        throw std::invalid_argument(std::string(operation) + ": invalid compute policy");
     }
 }
 
@@ -86,12 +86,10 @@ Fp8GdnConvPlan fp8_gdn_snapshot_resolve_plan(LinearPolicy policy, std::int32_t w
         throw std::invalid_argument("fp8 GDN snapshot: invalid B/W domain");
     }
     if (batch_size == 1) {
-        if (policy == LinearPolicy::AllowA8 && width >= 10) {
-            return {Fp8GdnConvScheduleId::MaterializedA8};
-        }
+        if (allows_a8(policy) && width >= 10) { return {Fp8GdnConvScheduleId::MaterializedA8}; }
         return b1_a16_plan(width);
     }
-    if (policy == LinearPolicy::AllowA8 && width * batch_size >= 9) {
+    if (allows_a8(policy) && width * batch_size >= 9) {
         return {Fp8GdnConvScheduleId::MaterializedA8};
     }
     return {Fp8GdnConvScheduleId::MaterializedA16};

@@ -298,9 +298,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& qkv, 
         constexpr std::int32_t kQkvRows = 10240;
         constexpr std::int32_t kZRows   = 6144;
         constexpr std::int32_t kRows    = kQkvRows + kZRows;
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4) {
-            throw std::invalid_argument("NVFP4 gdn_input_proj admits only A16 or A4");
-        }
         require_matrix(x, kHidden, cols, "x");
         require_matrix(qkv, kQkvRows, cols, "qkv");
         require_matrix(z, kZRows, cols, "z");
@@ -318,9 +315,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& qkv, 
         constexpr std::int32_t kQkvRows = 10240;
         constexpr std::int32_t kZRows   = 6144;
         constexpr std::int32_t kRows    = kQkvRows + kZRows;
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
-            throw std::invalid_argument("FP8 gdn_input_proj admits only A16 or A8");
-        }
         require_matrix(x, kHidden, cols, "x");
         require_matrix(qkv, kQkvRows, cols, "qkv");
         require_matrix(z, kZRows, cols, "z");
@@ -337,9 +331,6 @@ void dispatch_single_parent(const Tensor& x, const Weight& weight, Tensor& qkv, 
     constexpr std::int32_t kQkvRows = 8192;
     constexpr std::int32_t kZRows   = 4096;
     constexpr std::int32_t kRows    = kQkvRows + kZRows;
-    if (policy != LinearPolicy::A16Only) {
-        throw std::invalid_argument("Q8 gdn_input_proj admits only A16");
-    }
     require_matrix(x, kHidden, cols, "x");
     require_matrix(qkv, kQkvRows, cols, "qkv");
     require_matrix(z, kZRows, cols, "z");
@@ -478,9 +469,6 @@ void dispatch_single_parent_snapshot(const Tensor& x, const Weight& weight,
         constexpr std::int32_t kChannels   = kQueryRows + kKeyRows + kValueRows;
         constexpr std::int32_t kParentRows = kChannels + kZRows;
         const ConvGeometry geometry        = require_snapshot_input(x, kHidden);
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
-            throw std::invalid_argument("FP8 gdn_input_proj_conv_snapshot admits only A16 or A8");
-        }
         detail::validate_fp8_weight(weight, "fp8 gdn_input_proj_conv_snapshot");
         if (weight.n != kParentRows || weight.k != kHidden) {
             throw std::invalid_argument(
@@ -522,9 +510,6 @@ void dispatch_single_parent_snapshot(const Tensor& x, const Weight& weight,
     constexpr std::int32_t kZRows     = 4096;
     constexpr std::int32_t kChannels  = kQueryRows + kKeyRows + kValueRows;
     const ConvGeometry geometry       = require_snapshot_input(x, kHidden);
-    if (policy != LinearPolicy::A16Only) {
-        throw std::invalid_argument("Q8 gdn_input_proj_conv_snapshot admits only A16");
-    }
     require_q8_rowsplit(weight, kChannels + kZRows, "query/key/value/z weight");
     require_snapshot_operands(conv_weight, conv_states, valid_columns, initial_state_slots,
                               snapshot_base_slots, kChannels, geometry);
@@ -585,9 +570,6 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
         constexpr std::int32_t kChannels   = kQueryRows + kKeyRows + kValueRows;
         constexpr std::int32_t kParentRows = kChannels + kZRows;
         const ConvGeometry geometry        = require_record_input(x, kHidden);
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4) {
-            throw std::invalid_argument("NVFP4 gdn_input_proj_conv_record admits only A16 or A4");
-        }
         detail::validate_nvfp4_weight(weight, "nvfp4 gdn_input_proj_conv_record");
         if (weight.n != kParentRows || weight.k != kHidden) {
             throw std::invalid_argument(
@@ -642,9 +624,6 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
         constexpr std::int32_t kChannels   = kQueryRows + kKeyRows + kValueRows;
         constexpr std::int32_t kParentRows = kChannels + kZRows;
         const ConvGeometry geometry        = require_record_input(x, kHidden);
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
-            throw std::invalid_argument("FP8 gdn_input_proj_conv_record admits only A16 or A8");
-        }
         detail::validate_fp8_weight(weight, "fp8 gdn_input_proj_conv_record");
         if (weight.n != kParentRows || weight.k != kHidden) {
             throw std::invalid_argument("fp8 gdn_input_proj_conv_record: unsupported weight shape");
@@ -680,9 +659,6 @@ void dispatch_single_parent_record(const Tensor& x, const Weight& weight, const 
     constexpr std::int32_t kZRows     = 4096;
     constexpr std::int32_t kChannels  = kQueryRows + kKeyRows + kValueRows;
     const ConvGeometry geometry       = require_record_input(x, kHidden);
-    if (policy != LinearPolicy::A16Only) {
-        throw std::invalid_argument("Q8 gdn_input_proj_conv_record admits only A16");
-    }
     require_q8_rowsplit(weight, kChannels + kZRows, "query/key/value/z weight");
     require_record_operands(conv_weight, conv_states, valid_columns, initial_state_slots, kChannels,
                             geometry);
@@ -747,22 +723,19 @@ std::size_t gdn_input_proj_workspace_capacity_bytes(QType parent_qtype, std::int
     }
     if (parent_qtype == QType::NVFP4) {
         if (parent_rows != detail::Nvfp4GdnInputGeometry::kOutputRows ||
-            input_rows != detail::Nvfp4GdnInputGeometry::kInputRows ||
-            (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4)) {
+            input_rows != detail::Nvfp4GdnInputGeometry::kInputRows) {
             throw std::invalid_argument("gdn_input_proj workspace: unsupported NVFP4 profile");
         }
         return detail::nvfp4_gdn_input_workspace_capacity_bytes(policy, min_tokens, max_tokens);
     }
     if (parent_qtype == QType::FP8_E4M3FN_ROW_BF16) {
         if (parent_rows != detail::Fp8GdnInputGeometry::kOutputRows ||
-            input_rows != detail::Fp8GdnInputGeometry::kInputRows ||
-            (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8)) {
+            input_rows != detail::Fp8GdnInputGeometry::kInputRows) {
             throw std::invalid_argument("gdn_input_proj workspace: unsupported FP8 profile");
         }
         return detail::fp8_gdn_input_workspace_capacity_bytes(policy, min_tokens, max_tokens);
     }
-    if (parent_qtype == QType::Q8_G32_FP16 && parent_rows == 12288 && input_rows == 2048 &&
-        policy == LinearPolicy::A16Only) {
+    if (parent_qtype == QType::Q8_G32_FP16 && parent_rows == 12288 && input_rows == 2048) {
         (void)detail::q8_gdn_input_resolve_plan(
             {input_rows, 8192, 4096, parent_rows, input_rows, min_tokens});
         (void)detail::q8_gdn_input_resolve_plan(
@@ -831,8 +804,7 @@ std::size_t gdn_input_proj_conv_snapshot_workspace_capacity_bytes(
     require_snapshot_capacity_domain(batch_size, min_width, max_width);
     if (parent_qtype == QType::FP8_E4M3FN_ROW_BF16 &&
         parent_rows == detail::Fp8GdnInputGeometry::kOutputRows &&
-        input_rows == detail::Fp8GdnInputGeometry::kInputRows &&
-        (policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8)) {
+        input_rows == detail::Fp8GdnInputGeometry::kInputRows) {
         return detail::fp8_gdn_snapshot_workspace_capacity_bytes(policy, batch_size, min_width,
                                                                  max_width);
     }
@@ -881,14 +853,12 @@ std::size_t gdn_input_proj_conv_record_workspace_capacity_bytes(
     require_record_capacity_domain(batch_size, min_width, max_width);
     if (parent_qtype == QType::FP8_E4M3FN_ROW_BF16 &&
         parent_rows == detail::Fp8GdnInputGeometry::kOutputRows &&
-        input_rows == detail::Fp8GdnInputGeometry::kInputRows &&
-        (policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8)) {
+        input_rows == detail::Fp8GdnInputGeometry::kInputRows) {
         return detail::fp8_gdn_record_workspace_capacity_bytes(policy, batch_size, min_width,
                                                                max_width);
     }
     if (parent_qtype != QType::NVFP4 || parent_rows != detail::Nvfp4GdnInputGeometry::kOutputRows ||
-        input_rows != detail::Nvfp4GdnInputGeometry::kInputRows ||
-        (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4)) {
+        input_rows != detail::Nvfp4GdnInputGeometry::kInputRows) {
         throw std::invalid_argument(
             "gdn_input_proj_conv_record workspace: unsupported single-parent profile");
     }

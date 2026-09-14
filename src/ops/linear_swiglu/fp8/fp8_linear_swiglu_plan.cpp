@@ -20,7 +20,7 @@ enum class Fp8LinearSwiGluRoute : std::uint8_t {
 Fp8LinearSwiGluRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("fp8 linear_swiglu: T must be positive"); }
     if (policy == LinearPolicy::A16Only) { return Fp8LinearSwiGluRoute::A16; }
-    if (policy != LinearPolicy::AllowA8) {
+    if (!allows_a8(policy)) {
         throw std::invalid_argument("fp8 linear_swiglu admits only A16 or A8");
     }
     return tokens == 1 || tokens >= 3 ? Fp8LinearSwiGluRoute::A8 : Fp8LinearSwiGluRoute::A16;
@@ -54,8 +54,7 @@ std::size_t fp8_linear_swiglu_workspace_capacity_bytes(LinearPolicy policy, std:
     }
     (void)resolve_route(policy, min_tokens);
     (void)resolve_route(policy, max_tokens);
-    const bool interval_uses_a8 =
-        policy == LinearPolicy::AllowA8 && (min_tokens == 1 || max_tokens >= 3);
+    const bool interval_uses_a8 = allows_a8(policy) && (min_tokens == 1 || max_tokens >= 3);
     return interval_uses_a8
                ? fp8_a8_workspace_capacity_bytes(max_tokens, Fp8MlpGateUpGeometry::kInputRows)
                : 0;

@@ -121,7 +121,8 @@ int run_target_projection_case(DevicePackedWeight& parent, DevicePackedWeight* g
         else
             launch();
         cuda_synchronize(device.stream);
-        const bool a8            = policy == ops::LinearPolicy::AllowA8;
+        const bool a8 =
+            policy == ops::LinearPolicy::AllowA8 || policy == ops::LinearPolicy::AllowA4;
         const auto criterion     = dual ? kAttnInputProjA16Tolerance
                                    : a8 ? kAttnInputProjA8Tolerance
                                         : kFp8AttnInputProjA16Tolerance;
@@ -318,7 +319,8 @@ int run_bf16_target() {
 }
 
 int run_nvfp4_target_case(DevicePackedWeight& parent, std::int32_t tokens,
-                          ops::LinearPolicy policy = ops::LinearPolicy::A16Only) {
+                          ops::LinearPolicy policy = ops::LinearPolicy::A16Only,
+                          bool omit_divisors       = false) {
     constexpr std::int32_t kHidden = 5120;
     constexpr std::int32_t kQRows  = 6144;
     constexpr std::int32_t kKvRows = 1024;
@@ -343,11 +345,24 @@ int run_nvfp4_target_case(DevicePackedWeight& parent, std::int32_t tokens,
     const auto qw = rows(physical, 0, 6144), kw = rows(physical, 6144, 1024);
     const auto gw = rows(physical, 7168, 6144), vw = rows(physical, 13312, 1024);
     const auto divisor      = parent.view().input_scale_divisor;
-    const float unused_step = policy == ops::LinearPolicy::A16Only ? 1.0F : 0.0F;
+    const float unused_step = ops::allows_a4(policy) ? 0.0F : 1.0F;
+    const auto auxiliary    = [&](int index) -> std::optional<float> {
+        return omit_divisors ? std::nullopt : std::optional(divisor + index * unused_step);
+    };
     const auto prepared =
         std::get<ops::SingleProjectionWeight>(ops::prepare_attn_input_proj_weights(
-            {qw, policy, divisor}, {kw, policy, divisor + unused_step},
-            {gw, policy, divisor + 2 * unused_step}, {vw, policy, divisor + 3 * unused_step}));
+            {qw, policy, auxiliary(0)}, {kw, policy, auxiliary(1)}, {gw, policy, auxiliary(2)},
+            {vw, policy, auxiliary(3)}));
+    if (policy == ops::LinearPolicy::AllowA8) {
+        const auto mixed =
+            std::get<ops::SingleProjectionWeight>(ops::prepare_attn_input_proj_weights(
+                {qw, ops::LinearPolicy::AllowA4, divisor}, {kw, policy, divisor + 1},
+                {gw, policy, divisor + 2}, {vw, policy, divisor + 3}));
+        if (mixed.policy != ops::LinearPolicy::AllowA8) {
+            throw std::runtime_error(
+                "NVFP4 combined Use lost its activation permission intersection");
+        }
+    }
     ops::attn_input_proj(x, prepared.weight, q, g, k, v, prepared.policy, workspace, nullptr);
     cuda_synchronize();
 
@@ -385,9 +400,11 @@ int run_nvfp4_target() {
 
     int failures = 0;
     for (const std::int32_t tokens : {1, 2, 4, 8, 16, 20, 32, 33}) {
-        failures += run_nvfp4_target_case(parent, tokens);
+        failures += run_nvfp4_target_case(parent, tokens, ops::LinearPolicy::A16Only, tokens == 1);
     }
 #ifndef NINFER_SM86
+    failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA8);
+    failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA8, true);
     failures += run_nvfp4_target_case(parent, 4, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_target_case(parent, 17, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_target_case(parent, 1024, ops::LinearPolicy::AllowA4);
@@ -571,7 +588,7 @@ int run_weight_inputs() {
     {
         DevicePackedWeight parent(
             quantized_weight::make_patterned_weight(QType::FP8_E4M3FN_ROW_BF16, 14336, 5120, 349U));
-        for (const auto policy : {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA8}) {
+        for (const auto policy : {ops::LinearPolicy::A16Only, ops::LinearPolicy::AllowA4}) {
             for (const int t : {1, 17, 129}) {
                 failures += run_target_projection_case(parent, nullptr, t, policy, t == 17);
             }

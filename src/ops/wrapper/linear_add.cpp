@@ -87,25 +87,16 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
         throw std::invalid_argument("linear_add workspace: invalid token interval");
     }
     if (qtype == QType::BF16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("linear_add workspace: BF16 admits only A16");
-        }
         (void)detail::bf16_linear_add_select(output_rows, input_rows, min_tokens);
         (void)detail::bf16_linear_add_select(output_rows, input_rows, max_tokens);
         return 0;
     }
     if (qtype == QType::Q8_G32_FP16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("linear_add workspace: Q8 admits only A16");
-        }
         (void)detail::q8_linear_add_resolve_plan({output_rows, input_rows, input_rows, min_tokens});
         (void)detail::q8_linear_add_resolve_plan({output_rows, input_rows, input_rows, max_tokens});
         return 0;
     }
     if (qtype == QType::Q5_G64_FP16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("linear_add workspace: Q5 admits only A16");
-        }
         return detail::q5_linear_add_capacity_workspace_bytes(output_rows, input_rows, input_rows,
                                                               min_tokens, max_tokens);
     }
@@ -114,7 +105,7 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
                                 input_rows == detail::Nvfp4Residual6144Geometry::kInputRows) ||
                                (output_rows == detail::Nvfp4Residual17408Geometry::kOutputRows &&
                                 input_rows == detail::Nvfp4Residual17408Geometry::kInputRows);
-        if (!supported || (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4)) {
+        if (!supported) {
             throw std::invalid_argument("linear_add workspace: unsupported NVFP4 profile");
         }
         return detail::nvfp4_linear_add_workspace_capacity_bytes(output_rows, input_rows, policy,
@@ -125,7 +116,7 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
                                 input_rows == detail::Fp8Residual6144Geometry::kInputRows) ||
                                (output_rows == detail::Fp8Residual17408Geometry::kOutputRows &&
                                 input_rows == detail::Fp8Residual17408Geometry::kInputRows);
-        if (!supported || (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8)) {
+        if (!supported) {
             throw std::invalid_argument("linear_add workspace: unsupported FP8 profile");
         }
         return detail::fp8_linear_add_workspace_capacity_bytes(output_rows, input_rows, policy,
@@ -151,9 +142,6 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
     }
 
     if (w.qtype == QType::BF16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("BF16 linear_add admits only A16");
-        }
         require_bf16(w);
         if (!detail::bf16_linear_add_admits(w.n, w.k, t)) {
             throw std::invalid_argument("linear_add: unsupported BF16 shape");
@@ -169,9 +157,6 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
     }
 
     if (w.qtype == QType::Q5_G64_FP16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("Q5 linear_add admits only A16");
-        }
         require_q5(w);
         const bool supported_shape = (w.n == 5120 && w.k == 17408) || (w.n == 5120 && w.k == 6144);
         if (!supported_shape) { throw std::invalid_argument("linear_add: unsupported Q5 shape"); }
@@ -185,9 +170,6 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
     }
 
     if (w.qtype == QType::Q8_G32_FP16) {
-        if (policy != LinearPolicy::A16Only) {
-            throw std::invalid_argument("Q8 linear_add admits only A16");
-        }
         require_q8(w);
         if (w.n != 2048 || (w.k != 4096 && w.k != 6144)) {
             throw std::invalid_argument("linear_add: unsupported Q8 shape");
@@ -203,9 +185,6 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
     }
 
     if (w.qtype == QType::NVFP4) {
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA4) {
-            throw std::invalid_argument("NVFP4 linear_add admits only A16 or A4");
-        }
         detail::validate_nvfp4_weight(w, "nvfp4 linear_add");
         const bool supported_shape = (w.n == detail::Nvfp4Residual6144Geometry::kOutputRows &&
                                       w.k == detail::Nvfp4Residual6144Geometry::kInputRows) ||
@@ -222,9 +201,6 @@ void linear_add(const Tensor& x, const Weight& w, Tensor& residual_out, LinearPo
     }
 
     if (w.qtype == QType::FP8_E4M3FN_ROW_BF16) {
-        if (policy != LinearPolicy::A16Only && policy != LinearPolicy::AllowA8) {
-            throw std::invalid_argument("FP8 linear_add admits only A16 or A8");
-        }
         (void)detail::validate_fp8_weight(w, "fp8 linear_add");
         const bool supported_shape = (w.n == detail::Fp8Residual6144Geometry::kOutputRows &&
                                       w.k == detail::Fp8Residual6144Geometry::kInputRows) ||

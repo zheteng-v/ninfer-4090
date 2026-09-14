@@ -214,8 +214,10 @@ int run_nvfp4() {
         quantized_weight::make_patterned_weight(QType::NVFP4, kRows, kHidden, 607U, options));
     int failures = 0;
     failures += run_nvfp4_case(parent, 1, ops::LinearPolicy::A16Only);
+#if defined(NINFER_SM86)
     failures += run_nvfp4_case(parent, 4, ops::LinearPolicy::A16Only);
-#ifndef NINFER_SM86
+#else
+    failures += run_nvfp4_case(parent, 4, ops::LinearPolicy::AllowA8);
     failures += run_nvfp4_case(parent, 1, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_case(parent, 2, ops::LinearPolicy::AllowA4);
     failures += run_nvfp4_case(parent, 17, ops::LinearPolicy::AllowA4);
@@ -249,7 +251,9 @@ int run_fp8_case(DevicePackedWeight& parent, std::int32_t tokens, ops::LinearPol
     }
     cuda_synchronize();
 
-    const bool a8 = policy == ops::LinearPolicy::AllowA8 && tokens >= 8;
+    const bool a8 =
+        (policy == ops::LinearPolicy::AllowA8 || policy == ops::LinearPolicy::AllowA4) &&
+        tokens >= 8;
     const ReductionCriterion& criterion =
         a8 ? kFp8GdnInputProjA8Tolerance : kFp8GdnInputProjA16Tolerance;
     const std::int32_t sample_count = a8 ? kA8SampleRows : 7;
@@ -313,7 +317,8 @@ int run_fp8() {
     failures += run_fp8_case(parent, 1, ops::LinearPolicy::A16Only, true);
     failures += run_fp8_case(parent, 2, ops::LinearPolicy::A16Only);
     for (const std::int32_t tokens : {1, 2, 7, 8, 48, 65, 1024}) {
-        failures += run_fp8_case(parent, tokens, ops::LinearPolicy::AllowA8);
+        failures += run_fp8_case(
+            parent, tokens, tokens == 8 ? ops::LinearPolicy::AllowA4 : ops::LinearPolicy::AllowA8);
     }
     return failures;
 }

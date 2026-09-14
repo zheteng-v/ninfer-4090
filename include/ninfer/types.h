@@ -1059,8 +1059,7 @@ struct ContextCostSummary {
     ContextCostPresetSource transfer_source = ContextCostPresetSource::GenericDefault;
     ContextCostPresetSource prefill_source  = ContextCostPresetSource::GenericDefault;
     std::string hardware_class;
-    std::string model_id;
-    std::string weights_id;
+    std::string prefill_signature;
     std::filesystem::path preset_path;
 };
 
@@ -1110,16 +1109,17 @@ public:
 };
 
 struct LoadSummary {
-    std::string target;
-    std::string model_id;
-    std::string weights_id;
+    std::string architecture;
+    std::string model_name;
+    std::vector<std::string> weight_formats;
+    std::string prefill_signature;
     double load_seconds                = 0.0;
     double upload_seconds              = 0.0;
     std::uint64_t artifact_bytes_read  = 0;
     std::uint64_t host_to_device_bytes = 0;
     std::uint64_t peak_staging_bytes   = 0;
-    std::size_t tensor_count           = 0;
-    std::size_t resource_count         = 0;
+    std::size_t device_object_count    = 0;
+    std::size_t host_object_count      = 0;
     ContextCostSummary context_cost;
 };
 

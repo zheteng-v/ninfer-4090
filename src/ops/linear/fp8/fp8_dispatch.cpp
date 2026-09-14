@@ -27,13 +27,8 @@ Fp8LinearRoute resolve_route(std::int32_t output_rows, std::int32_t input_rows, 
     if (policy == LinearPolicy::A16Only) { return Fp8LinearRoute::A16; }
     // A permissive policy does not require a lower-precision route. Vocabulary logits retain
     // BF16 activation compute for every policy, matching the existing Q6/Q8 output heads.
-    if (problem == Fp8Problem::Vocabulary &&
-        (policy == LinearPolicy::AllowA8 || policy == LinearPolicy::AllowA4)) {
-        return Fp8LinearRoute::A16;
-    }
-    if (policy != LinearPolicy::AllowA8) {
-        throw std::invalid_argument("fp8 linear: unsupported policy");
-    }
+    if (problem == Fp8Problem::Vocabulary && allows_a8(policy)) { return Fp8LinearRoute::A16; }
+    if (!allows_a8(policy)) { throw std::invalid_argument("fp8 linear: unsupported policy"); }
 
     switch (problem) {
     case Fp8Problem::AttnInput:

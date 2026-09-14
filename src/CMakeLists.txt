@@ -37,8 +37,8 @@ target_link_libraries(ninfer_core PUBLIC CUDA::cudart CUDA::nvtx3 Threads::Threa
 
 add_library(ninfer_runtime_support STATIC
   runtime/engine/admission_policy.cpp
-  runtime/engine/context_cost.cpp
-  runtime/engine/context_cost_defaults.cpp
+  runtime/engine/context_cache/context_cost.cpp
+  runtime/engine/context_cache/context_cost_defaults.cpp
   runtime/engine/kv_capacity.cpp
   runtime/engine/public_types.cpp)
 ninfer_internal_includes(ninfer_runtime_support)
@@ -368,6 +368,53 @@ add_library(ninfer_media_decode STATIC
 ninfer_internal_includes(ninfer_media_decode)
 target_link_libraries(ninfer_media_decode PRIVATE ${NINFER_FFMPEG_TARGET})
 
+add_library(ninfer_model_runtime STATIC
+  models/qwen3_5/frontend/frontend.cpp
+  models/qwen3_5/frontend/output_session.cpp
+  models/qwen3_5/frontend/chat_template.cpp
+  models/qwen3_5/frontend/digest.cpp
+  models/qwen3_5/frontend/processor.cpp
+  models/qwen3_5/frontend/media_cache.cpp
+  models/qwen3_5/frontend/tool_call_parser.cpp
+  models/qwen3_5/measurement.cpp
+  models/qwen3_5/execution/parameters.cpp
+  models/qwen3_5/execution/attention.cpp
+  models/qwen3_5/execution/ffn.cpp
+  models/qwen3_5/execution/gdn.cpp
+  models/qwen3_5/execution/mtp.cpp
+  models/qwen3_5/execution/text.cpp
+  models/qwen3_5/execution/vision.cpp
+  models/qwen3_5/execution/draft.cpp
+  models/qwen3_5/program/storage/draft_context.cpp
+  models/qwen3_5/state/decoder_state.cpp
+  models/qwen3_5/state/state_image.cpp
+  models/qwen3_5/program/planning/pressure_planner.cpp
+  models/qwen3_5/program/planning/startup.cpp
+  models/qwen3_5/program/planning/graph_profiles.cpp
+  models/qwen3_5/program/program.cpp
+  models/qwen3_5/program/program_impl.cpp
+  models/qwen3_5/program/context_work.cpp
+  models/qwen3_5/program/planning/pressure.cpp
+  models/qwen3_5/program/planning/checkpoint_recovery.cpp
+  models/qwen3_5/program/transactions/materialization.cpp
+  models/qwen3_5/program/storage/context.cpp
+  models/qwen3_5/program/transactions/commit.cpp
+  models/qwen3_5/program/transactions/capture.cpp
+  models/qwen3_5/program/graphs.cpp
+  models/qwen3_5/program/decode.cpp
+  models/qwen3_5/program/prefill.cpp
+  models/qwen3_5/program/planning/request_plan.cpp
+  models/qwen3_5/program/speculative/mtp.cpp
+  models/qwen3_5/program/speculative/target_verification.cpp
+  models/qwen3_5/program/round_buffers.cpp
+  models/qwen3_5/program/prefix_identity.cpp
+  models/qwen3_5/program/vision_control.cpp
+  models/qwen3_5/execution/visual_scatter.cpp)
+ninfer_internal_includes(ninfer_model_runtime)
+target_link_libraries(ninfer_model_runtime
+  PUBLIC ninfer_model_loading ninfer_ops ninfer_runtime_support
+  PRIVATE ninfer_media_decode)
+
 if(NINFER_BUILD_MEDIA_ACQUIRE)
   # Product-only path/data/HTTP acquisition. No target package links this library.
   add_library(ninfer_media_acquire STATIC
@@ -399,18 +446,16 @@ endif()
 # One cold closed registry plus the opaque public product Engine. Family and exact-target
 # directories contribute their sources directly to this single compile owner below.
 add_library(ninfer_engine STATIC
-  targets/registry.cpp
+  runtime/engine/model_instance.cpp
   runtime/contract/sampling.cpp
   runtime/engine/engine.cpp)
 ninfer_internal_includes(ninfer_engine)
 target_include_directories(ninfer_engine PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-add_subdirectory(targets/qwen3_6)
-add_subdirectory(targets/qwen3_6_27b)
-add_subdirectory(targets/qwen3_6_35b_a3b)
 
 target_link_libraries(ninfer_engine
   PRIVATE
+    ninfer_model_runtime
     ninfer_artifact
     ninfer_core
     ninfer_runtime_support
