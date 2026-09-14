@@ -244,6 +244,10 @@ Run `./build/apps/ninfer --help` for the exact option contract.
 
 ## Context and memory
 
+Artifact v3 stores model configuration, logical bindings, encoded objects, and frontend resources
+in the artifact itself. Runtime `--kv-dtype` remains an independent execution choice and does not
+change the artifact's weight representation.
+
 The registered model IDs have a native context limit of 262,144 tokens. The practical
 allocation on one RTX 4090 depends on the selected artifact, media workload, output budget, and
 KV-cache type.

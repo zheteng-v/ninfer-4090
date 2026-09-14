@@ -11,6 +11,11 @@ This fork targets `sm_89` and Linux. Blackwell-only NVFP4/W4A4 execution is unav
 engine uses the same groupwise-int path as the 3090 base. The Windows path and the
 Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.
 
+The `probe/v3-on-sm89` integration line uses NInfer artifact v3 and the bound-instance Qwen3.5
+runtime architecture from upstream. It has been compiled end to end for `sm_89`, and the official
+`qwen3_8_27b_v3.ninfer` artifact has passed host binding for Text, MTP, DFlash2, and Vision.
+The production v2 line remains the default until device loading and inference qualification finish.
+
 ## Measured results on the RTX 4090
 
 Conditions: single request, greedy decoding, CUDA Graphs on, INT8 KV, `--prefill-chunk 1024`,

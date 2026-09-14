@@ -1,6 +1,6 @@
 # HTTP serving
 
-`build/apps/ninfer-serve` loads one registered artifact and exposes OpenAI- and
+`build/apps/ninfer-serve` loads one v3 `.ninfer` artifact and exposes OpenAI- and
 Anthropic-compatible HTTP endpoints over one resident NInfer Engine.
 
 ## Start the server
@@ -36,9 +36,9 @@ artifacts with DFlash2 companion weights also support `--spec dflash2 --draft-to
 concurrency, prefix reuse, and image/video request surfaces. It may remain combined with
 `--vision`.
 
-When `--model-id` is omitted, the server advertises and accepts the loaded container's exact
-`identity.model_id`. An explicit `--model-id` remains a public HTTP alias override and does not
-select or alter the artifact.
+When `--model-id` is omitted, the server advertises and accepts the artifact's `metadata.name`,
+falling back to its architecture name when no name is stored. An explicit `--model-id` is a public
+HTTP alias override and does not select or alter model execution.
 
 Vision is disabled by default: its weights and Vision-specific unified-workspace extent are not
 allocated, and media requests and token-count requests fail with HTTP 400 `vision_disabled`. Add
@@ -47,7 +47,8 @@ frozen by `--spec mtp|dflash|dflash2` and `--draft-tokens`; omitting `--spec` lo
 `--lm-head-draft` additionally loads the optimized proposal head. DFlash on 35B-A3B and DFlash2 on Qwen3.8-27B can be combined
 with `--vision`; each accelerates generated-text decode after multimodal prefill, while Vision encode
 and prefill remain outside speculative acceleration. A later request cannot enable a capability
-omitted at startup.
+omitted at startup. The artifact need only contain the Text backbone and the optional components
+selected for this process.
 
 ## Endpoints
 
@@ -410,7 +411,7 @@ promise their wall-clock residency; physical retention follows the resource sche
 
 NInfer implements the typed-Item and semantic-event core of the OpenAI
 [Responses API](https://developers.openai.com/api/reference/resources/responses/overview). All
-registered artifact identities use this same adapter and Engine route. It is intentionally not
+supported model instances use this same adapter and Engine route. It is intentionally not
 advertised as full parity with OpenAI-hosted tools, durable cloud storage, background jobs,
 Conversations, or compaction.
 
@@ -856,11 +857,13 @@ The table lists executable defaults. The startup example selects a long-context 
 | `--greedy` | force exact argmax for all requests | off |
 
 Context-cost coefficients resolve once at startup from generic defaults, matching compiled values,
-and optional transfer or artifact-prefill entries from `--context-cost-presets FILE`. A malformed
+and optional transfer or prefill entries from `--context-cost-presets FILE`. Prefill entries match
+the hardware and a signature derived from the actual Text/Vision configuration, bindings and Uses.
+A new representation without a matching measurement uses generic prefill coefficients. A malformed
 file aborts startup; the operational context-cost record and JSONL `server_start` identify the
 selected source.
 
-Engine selects sampling defaults from the loaded model and the request's resolved thinking mode.
+Engine selects sampling defaults from the loaded architecture and the request's resolved thinking mode.
 Qwen3.6-27B and Qwen3.8-27B use `1.0/0.95/20/0/0` for
 temperature/top-p/top-k/min-p/presence penalty in thinking mode and `0.7/0.80/20/0/1.5` in
 non-thinking mode. Qwen3.6-35B-A3B differs only in its thinking presence penalty, which is `1.5`.
@@ -894,7 +897,7 @@ in append mode and flushes every event, so successive model or MTP blocks may sh
 file. The parent directory must already exist. Failure to open the file aborts startup; the log path
 is also rejected if it resolves to the model artifact.
 
-Every line is one `ninfer_serve_request_log` schema-v20 JSON object. All events carry
+Every line is one `ninfer_serve_request_log` schema-v21 JSON object. All events carry
 `timestamp_unix_ms` and a process-unique `server_instance_id`; request IDs are monotonic only within
 that server instance. Successful request-start records include request-scoped acquisition,
 media-preprocessing wall/work, tokenizer, cache hit/miss/single-flight, and payload-size fields;
@@ -902,7 +905,7 @@ they do not infer request behavior from process-global counter deltas.
 
 | Event | Contents |
 |---|---|
-| `server_start` | target/weights identity and artifact, resolved Engine and context-cache capacities, registered thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+| `server_start` | artifact path, architecture, public name, actual formats and prefill signature; resolved Engine and context-cache capacities, thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
 | `request_start` | protocol, resolved sampler and seed, requested and effective reasoning effort, thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape |
 | `request_rejected` | parsed request shape, requested reasoning effort with unresolved effective value, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |

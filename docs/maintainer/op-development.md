@@ -15,7 +15,7 @@ This file owns only rules that apply across Op families:
 
 - Op admission and semantic boundaries;
 - contract content and implementation freedom;
-- Op, wrapper, launcher, kernel, core, and target ownership;
+- Op, wrapper, launcher, kernel, core, and model ownership;
 - state, workspace, naming, and dependency rules;
 - Op-level qualification and performance evidence.
 
@@ -62,12 +62,12 @@ One caller, one registered shape or format, one optimized token extent, one devi
 mutable state, or a fused formula does not disqualify an Op. Reuse count and support breadth do not
 determine ownership.
 
-Classify a proposed target-callable computation in this order:
+Classify a proposed model-callable computation in this order:
 
 1. If it has no logical tensor or state effect, it is infrastructure, validation, planning, or raw
    transfer rather than an Op.
 2. If its complete transformation cannot be defined from explicit arguments and metadata, it
-   belongs to target or product schedule.
+   belongs to model or product schedule.
 3. If it decides call order, lifecycle, frontier, commit, rollback, or request policy, it belongs
    to Program, schedule, or runtime.
 4. If it is only a partial step beneath a complete transformation, it is a private implementation
@@ -84,12 +84,12 @@ boundary is not semantically closed.
 
 ### 2.1 Boundaries outside the Op layer
 
-Program, target schedule, and runtime policy own model topology, call order, weight-role and state
+Program, model schedule, and runtime policy own model topology, call order, weight-role and state
 instance selection, prompt chunking, multimodal spans, generated-token transactions,
 prefix/frontier/commit/rollback policy, persistent state lifetime, CUDA Graph variants, and
 publication of product statistics.
 
-Core owns target-neutral storage and execution mechanisms: tensor and weight views, checked
+Core owns model-independent storage and execution mechanisms: tensor and weight views, checked
 layouts, arenas, physical cache containers, CUDA Graph lifetime, and raw host/device or
 device/device transfers. A physical container may produce a checked view, but it does not acquire a
 logical sequence cursor or transaction policy.
@@ -101,18 +101,18 @@ device transformation.
 
 Wrapper validation, launchers, CUDA entry points, codecs, implementation plans, partial reductions,
 staging kernels, workspace layout helpers, and device primitives are parts of an Op implementation,
-not independently target-callable Ops.
+not independently model-callable Ops.
 
-Every target-callable device transformation belongs to the central Op layer. A target invokes a
+Every model-callable device transformation belongs to the central Op layer. A model implementation invokes a
 contract from `include/ninfer/ops/`, composes existing Ops and core mechanisms, or keeps host-side
-schedule composition in the target. There is no target-private Op category.
+schedule composition in the model implementation.
 
 ### 2.2 Semantic extents and private routes
 
 When a contract defines an axis as the Text/MTP token extent `T`, it admits every positive value
 representable by its views and available storage unless the contract declares a semantic capacity.
 Decode, latency-sensitive/hot-interval, and prefill may name private workload or benchmark
-regimes. They are not semantic variants, separate target-callable entries, or compute mechanisms.
+regimes. They are not semantic variants, separate model-callable entries, or compute mechanisms.
 
 Other axes retain the finite geometry or capacity declared by their own contracts. A matrix column
 does not become Text/MTP `T` merely because an implementation uses the same physical layout.
@@ -265,7 +265,7 @@ hidden device memory, capture graphs, or choose model call order.
 
 The launcher owns private launch declarations and host definitions, grid/block/shared-memory
 policy, template instantiation, and launch-error handling. Launcher headers are private:
-contract headers, targets, product code, permanent tests, and public benchmarks do not include
+contract headers, models, product code, permanent tests, and public benchmarks do not include
 them.
 
 ### 4.3 Kernel and common facilities
@@ -275,11 +275,11 @@ encode exact shape, format, SM capability, tiling, padding, and alignment assump
 assumption has a matching wrapper or launcher predicate and is never inferred from model identity.
 
 `src/ops/common/` and category-private common code contain narrow zero-cost arithmetic, memory,
-warp, and MMA facilities. They are not a second semantic catalog and are not included by targets.
+warp, and MMA facilities. They are not a second semantic catalog and are not included by models.
 
 A family may share private launch or computation bodies across related Ops. Each owning Op still
 defines its output mapping, observable fusion boundary, validation, and dispatch; sharing does not
-create a target-callable private backend.
+create a model-callable private backend.
 
 ## 5. State, workspace, naming, and dependencies
 
@@ -290,10 +290,15 @@ dtype and numeric format, storage layout, logical and padded shape, payload plan
 geometry, and alignment.
 
 Ops do not receive artifact object names, converter source fields, model weight roles, recipes, or
-provenance. Artifact binding and target loading translate those concepts into explicit execution
+provenance. Artifact binding and model loading translate those concepts into explicit execution
 views.
 
-Program owns persistent state instances and lifetime; core owns target-neutral physical
+A weight preparation entry resolves weight views and activation permissions into operands for a
+supported native overload, checking its parent geometry, format, layout and shape. See
+[`weight_input.h`](../../include/ninfer/ops/weight_input.h). Model execution composes the prepared
+Ops; resource queries and execution check their applicable contracts.
+
+Program owns persistent state instances and lifetime; core owns model-independent physical
 containers; an Op owns only the documented reads, writes, outputs, and state transition of one
 call.
 
@@ -337,26 +342,26 @@ ordering.
 The dependency direction is:
 
 ```text
-core <- ops <- target <- runtime/engine product route
+core <- ops <- model execution <- runtime/engine product route
 ```
 
-Artifact and loading code may materialize execution views for a target, but the Op layer does not
-depend on artifact provenance or target binding concepts.
+Artifact and loading code may materialize execution views for a model, but the Op layer does not
+depend on artifact provenance or model binding concepts.
 
 Enforce the boundary in code and build ownership:
 
-- contract headers include only required L0, CUDA host, and peer semantic contract types;
-- `src/ops/**` does not include target, Program, schedule, product, or artifact-provenance headers;
-- target schedule includes contract headers, never private launcher, kernel, common, codec, or plan
+- contract headers include only required core, CUDA host, and peer semantic contract types;
+- `src/ops/**` does not include model, Program, schedule, product, or artifact-provenance headers;
+- model execution includes contract headers, never private launcher, kernel, common, codec, or plan
   headers;
-- `ninfer_ops` does not link a target;
-- core and artifact do not link Ops or targets;
+- `ninfer_ops` does not link a model implementation;
+- core and artifact do not link Ops or models;
 - explicit source lists give every implementation one build and link owner.
 
 ## 6. Qualification
 
 Semantic Op tests live under `tests/ops/` and invoke the public contract independently of model call
-order. They link the Op layer and required L0 libraries rather than a target package. Commands and
+order. They link the Op layer and required core libraries rather than a model implementation. Commands and
 common reporting behavior belong in [`tests/README.md`](../../tests/README.md).
 
 ### 6.1 Oracle
@@ -412,7 +417,7 @@ one case establishes several dimensions.
 When CUDA Graph capture/replay is part of the public execution contract, qualify the captured
 public Op and its observable effects against the same oracle.
 
-Keep schedule composition, persistent-state lifetime, and end-to-end behavior in target or product
+Keep schedule composition, persistent-state lifetime, and end-to-end behavior in model or product
 integration tests. Private candidates, plan choices, launcher symbols, filenames, and source
 organization are not qualification subjects.
 
@@ -542,7 +547,7 @@ temporary sweep and its private entry points are then removed as described above
 
 An Op-scoped performance claim ends at the public Op boundary. Exact formats, layouts, shapes, and
 extents can be constructed directly by the Op benchmark; they do not authorize loading a model
-artifact or invoking a target, Program, Engine, or whole-round benchmark. Product-route evidence is
+artifact or invoking a model, Program, Engine, or whole-round benchmark. Product-route evidence is
 required only when the requested deliverable explicitly makes an end-to-end claim and includes
 that product route in scope.
 
@@ -578,7 +583,7 @@ rewritten:
    independent oracle;
 8. measure the Op when performance changes; measure a product route only for an explicitly scoped
    end-to-end claim;
-9. integrate targets only through semantic contract headers and explicit operands;
+9. integrate models only through semantic contract headers and explicit operands;
 10. give every source and symbol one clear build and link owner.
 
 A contract change updates the authoritative comment, affected implementations, callers whose

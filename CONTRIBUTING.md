@@ -39,7 +39,7 @@ a linked, confirmed Issue may be closed without detailed review.
 A bug report must contain enough information for the maintainer to locate and reason about the
 failure. Include, as applicable:
 
-- the exact NInfer commit or release and registered artifact identity;
+- the exact NInfer commit or release, artifact source, and recipe when using custom weights;
 - the GPU, driver, CUDA toolchain, build configuration, and relevant runtime options;
 - the complete command, request, or smallest practical reproduction;
 - the expected behavior and the observed behavior;
