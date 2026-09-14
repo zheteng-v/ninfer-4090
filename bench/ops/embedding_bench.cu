@@ -1,4 +1,5 @@
 // Public embedding benchmark: normal IDs and mask-heavy draft blocks at explicit matrix extents.
+#include "core/weight.h"
 #include "ninfer/ops/embedding.h"
 
 #include "core/device.h"

@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "core/device.h"
 #include "ops/linear_add/linear_add_test_common.h"
 

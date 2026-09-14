@@ -1,14 +1,10 @@
 #pragma once
 
-#include "artifact/binder.h"
+#include "core/weight.h"
 #include "core/tensor.h"
 
 #include <array>
 #include <cstddef>
-
-namespace ninfer::artifact {
-class MaterializedArtifact;
-}
 
 namespace ninfer::targets::qwen3_6 {
 
@@ -26,38 +22,6 @@ struct VisionBackboneConfig {
     static constexpr int rotary_dim          = head_dim;
     static constexpr float rope_theta        = 10'000.0F;
     static constexpr float norm_epsilon      = 1.0e-6F;
-};
-
-struct VisionLayerPlan {
-    artifact::ObjectHandle qkv;
-    artifact::ObjectHandle qkv_bias;
-    artifact::ObjectHandle output;
-    artifact::ObjectHandle output_bias;
-    artifact::ObjectHandle fc1;
-    artifact::ObjectHandle fc1_bias;
-    artifact::ObjectHandle fc2;
-    artifact::ObjectHandle fc2_bias;
-    artifact::ObjectHandle norm1_weight;
-    artifact::ObjectHandle norm1_bias;
-    artifact::ObjectHandle norm2_weight;
-    artifact::ObjectHandle norm2_bias;
-};
-
-struct VisionBackbonePlan {
-    artifact::ObjectHandle patch_embedding;
-    artifact::ObjectHandle patch_embedding_bias;
-    artifact::ObjectHandle position_embedding;
-    std::array<VisionLayerPlan, VisionBackboneConfig::layers> layers;
-};
-
-struct VisionMergerInputPlan {
-    artifact::ObjectHandle fc1;
-    artifact::ObjectHandle fc1_bias;
-};
-
-struct VisionMergerNormPlan {
-    artifact::ObjectHandle weight;
-    artifact::ObjectHandle bias;
 };
 
 struct VisionLayerWeights {
@@ -91,16 +55,5 @@ struct VisionWeights {
     Weight merger_fc2;
     Tensor merger_fc2_bias;
 };
-
-[[nodiscard]] VisionBackbonePlan bind_vision_backbone(artifact::Binder& binder,
-                                                      artifact::TensorPlacement placement);
-[[nodiscard]] VisionMergerInputPlan bind_vision_merger_input(artifact::Binder& binder,
-                                                             artifact::TensorPlacement placement);
-[[nodiscard]] VisionMergerNormPlan bind_vision_merger_norm(artifact::Binder& binder,
-                                                           artifact::TensorPlacement placement);
-
-[[nodiscard]] VisionCommonWeights materialize_vision_common(
-    const artifact::MaterializedArtifact& materialized, const VisionBackbonePlan& backbone,
-    const VisionMergerInputPlan& merger_input, const VisionMergerNormPlan& merger_norm);
 
 } // namespace ninfer::targets::qwen3_6

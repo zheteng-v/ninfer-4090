@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/sparse_moe.h"
 
 #include "core/nvtx.h"

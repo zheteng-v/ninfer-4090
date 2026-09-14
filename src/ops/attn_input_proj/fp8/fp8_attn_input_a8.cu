@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/attn_input_proj/fp8/fp8_attn_input_plan.h"
 
 #include "core/device.h"

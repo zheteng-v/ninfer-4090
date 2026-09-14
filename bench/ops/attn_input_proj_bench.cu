@@ -1,6 +1,7 @@
 // Public-Op benchmark for every registered Attention input-projection contract.
 // Production dispatch is owned exclusively by attn_input_proj().
 
+#include "core/weight.h"
 #include "ninfer/ops/attn_input_proj.h"
 
 #include "core/device.h"

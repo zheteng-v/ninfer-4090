@@ -1,5 +1,6 @@
 // Complete public-Op benchmark for the registered Q8 LinearSwiGLU profiles.
 
+#include "core/weight.h"
 #include "ninfer/ops/linear_swiglu.h"
 
 #include "core/device.h"

@@ -1,6 +1,7 @@
 // Public-Op benchmark for every registered GDN input-projection contract.
 // Production dispatch is owned exclusively by gdn_input_proj().
 
+#include "core/weight.h"
 #include "ninfer/ops/gdn_input_proj.h"
 
 #include "core/device.h"

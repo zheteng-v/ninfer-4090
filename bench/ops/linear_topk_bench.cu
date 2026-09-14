@@ -1,4 +1,5 @@
 // Public cold-cache benchmark for the three registered linear_topk profiles.
+#include "core/weight.h"
 #include "ninfer/ops/linear_topk.h"
 
 #include "ninfer_bench_common.h"

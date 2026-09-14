@@ -8,6 +8,7 @@
 //   ncu --profile-from-start off ./build/bench/ninfer_linear_bench \
 //       --qtype q4 --n 4096 --k 5120 --t 8 --profile
 
+#include "core/weight.h"
 #include "ninfer/ops/linear.h"
 
 #include "core/device.h"

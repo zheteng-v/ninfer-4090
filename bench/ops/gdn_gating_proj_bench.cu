@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/gdn_gating_proj.h"
 #include "ninfer_bench_common.h"
 

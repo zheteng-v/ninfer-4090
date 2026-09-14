@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/q5/q5_dispatch.h"
 
 #include <stdexcept>

@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "targets/qwen3_6_27b/impl/variant.h"
 
 #include "ninfer/ops/attn_input_proj.h"

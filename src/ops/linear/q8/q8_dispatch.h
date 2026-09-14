@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/weight.h"
 #include "ninfer/ops/linear.h"
 #include "ops/linear/q8/q8_launch.h"
 

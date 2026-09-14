@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/weight.h"
 #include "core/arena.h"
 #include "core/tensor.h"
 
@@ -20,7 +21,7 @@ namespace ninfer::ops {
 enum class LinearPolicy : std::uint8_t {
     A16Only, ///< Admit only A16 compute profiles.
     AllowA8, ///< Admit either A16 or A8 compute profiles.
-    AllowA4, ///< Admit either A16 or A4 compute profiles.
+    AllowA4, ///< Admit A16, A8 or A4 compute profiles.
 };
 
 /**

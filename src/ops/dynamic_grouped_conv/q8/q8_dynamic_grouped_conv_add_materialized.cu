@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/dynamic_grouped_conv/q8/q8_dynamic_grouped_conv_add_kernels.h"
 #include "core/device.h"
 #include "ops/linear/q8/q8_config.h"

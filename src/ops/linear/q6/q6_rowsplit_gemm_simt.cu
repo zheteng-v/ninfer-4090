@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/q6/q6_launch.h"
 #include "ops/common/math.h"
 #include "ops/common/token_slices.h"

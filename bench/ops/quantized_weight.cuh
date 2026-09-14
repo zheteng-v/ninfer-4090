@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/weight.h"
 #include "ninfer_bench_common.h"
 
 #include <cuda_runtime.h>

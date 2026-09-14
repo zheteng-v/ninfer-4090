@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/linear_swiglu.h"
 
 #include "ops/linear/fp8/fp8_format.h"

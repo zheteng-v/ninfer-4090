@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/sparse_moe/prefill/sparse_moe_prefill.h"
 
 #include "core/device.h"

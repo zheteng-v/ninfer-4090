@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/nvfp4/nvfp4_launch.h"
 
 #include "core/device.h"

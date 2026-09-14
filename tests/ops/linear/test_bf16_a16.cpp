@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/linear.h"
 
 #include "core/decode_graph.h"

@@ -16,7 +16,7 @@ function(ninfer_cuda_archive target)
   target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 endfunction()
 
-# Device/tensor/layout/graph primitives and the model-independent request runtime.
+# Physical device, tensor, weight, layout and graph primitives.
 add_library(ninfer_core STATIC
   core/arena.cu
   core/device.cu
@@ -29,23 +29,31 @@ add_library(ninfer_core STATIC
   core/linear_attention_state.cpp
   core/layout.cpp
   core/tensor.cpp
-  core/decode_graph.cpp
+  core/weight_view.cpp
+  core/decode_graph.cpp)
+ninfer_internal_includes(ninfer_core)
+ninfer_cuda_archive(ninfer_core)
+target_link_libraries(ninfer_core PUBLIC CUDA::cudart CUDA::nvtx3 Threads::Threads)
+
+add_library(ninfer_runtime_support STATIC
   runtime/engine/admission_policy.cpp
   runtime/engine/context_cost.cpp
   runtime/engine/context_cost_defaults.cpp
   runtime/engine/kv_capacity.cpp
   runtime/engine/public_types.cpp)
-ninfer_internal_includes(ninfer_core)
-ninfer_cuda_archive(ninfer_core)
-target_link_libraries(ninfer_core PUBLIC ${NINFER_CUDART_TARGET} CUDA::nvtx3)
+ninfer_internal_includes(ninfer_runtime_support)
+target_link_libraries(ninfer_runtime_support PUBLIC ninfer_core)
 
 # Generic .ninfer framing, binding, and direct final materialization.
 add_library(ninfer_artifact STATIC
+  artifact/schema.cpp
+  artifact/formats.cpp
+  artifact/layouts.cpp
+  artifact/file_io.cpp
   artifact/reader.cpp
-  artifact/storage_layouts.cpp
   artifact/binder.cpp
   artifact/materializer.cpp
-  artifact/typed_binding.cpp)
+  artifact/views.cpp)
 ninfer_internal_includes(ninfer_artifact)
 target_link_libraries(ninfer_artifact PUBLIC ninfer_core)
 
@@ -70,6 +78,7 @@ endif()
 # Shared mathematical Ops. The list is intentionally explicit: adding a
 # source is a build-boundary decision, not an accidental recursive-glob side effect.
 add_library(ninfer_ops STATIC
+  ops/weight_input.cpp
   ops/launcher/add_bias.cu
   ops/launcher/argmax.cu
   ops/launcher/cast.cu
@@ -336,6 +345,24 @@ add_library(ninfer_text STATIC
 ninfer_internal_includes(ninfer_text)
 target_compile_definitions(ninfer_text PUBLIC UTF8PROC_STATIC)
 
+# Immutable model data and cold loading, independently buildable from Program and Engine.
+add_library(ninfer_model_loading STATIC
+  models/registry.cpp
+  models/qwen3_5/config.cpp
+  models/qwen3_5/model.cpp
+  models/qwen3_5/load.cpp
+  models/qwen3_5/load/text.cpp
+  models/qwen3_5/load/vision.cpp
+  models/qwen3_5/load/mtp.cpp
+  models/qwen3_5/load/dflash.cpp
+  models/qwen3_5/load/dflash2.cpp
+  models/qwen3_5/load/resources.cpp
+  models/qwen3_5/load/prepare.cpp
+  models/qwen3_5/frontend/resources.cpp
+  models/qwen3_5/frontend/tokenizer.cpp)
+ninfer_internal_includes(ninfer_model_loading)
+target_link_libraries(ninfer_model_loading PUBLIC ninfer_artifact ninfer_text ninfer_ops)
+
 add_library(ninfer_media_decode STATIC
   media/decode/decode.cpp)
 ninfer_internal_includes(ninfer_media_decode)
@@ -386,6 +413,7 @@ target_link_libraries(ninfer_engine
   PRIVATE
     ninfer_artifact
     ninfer_core
+    ninfer_runtime_support
     ninfer_ops
     ninfer_text
     ninfer_media_decode)

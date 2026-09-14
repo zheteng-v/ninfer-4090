@@ -53,11 +53,31 @@ endfunction()
 
 # Artifact framing and model-independent runtime contracts.
 ninfer_add_test(ninfer_artifact_reader_test
-  SOURCES test_ninfer_artifact_reader.cpp
+  SOURCES artifact/test_reader.cpp
   LIBRARIES ninfer_artifact)
 ninfer_add_test(ninfer_artifact_materialization_test
-  SOURCES test_artifact_materialization.cpp
+  SOURCES artifact/test_materialization.cpp artifact/materialization_cuda_errors.cpp
   LIBRARIES ninfer_artifact)
+target_link_options(ninfer_artifact_materialization_test PRIVATE
+  "LINKER:--wrap=cudaMalloc"
+  "LINKER:--wrap=cudaMallocHost"
+  "LINKER:--wrap=cudaFree"
+  "LINKER:--wrap=cudaFreeHost"
+  "LINKER:--wrap=cudaEventCreateWithFlags"
+  "LINKER:--wrap=cudaEventRecord"
+  "LINKER:--wrap=cudaMemcpyAsync"
+  "LINKER:--wrap=cudaStreamSynchronize")
+add_test(NAME ninfer_artifact_writer_interop_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/artifact/writer_interop.py
+    $<TARGET_FILE:ninfer_artifact_materialization_test>)
+set_tests_properties(ninfer_artifact_writer_interop_test PROPERTIES SKIP_RETURN_CODE 77)
+ninfer_add_test(ninfer_qwen3_5_loading_real_test
+  SOURCES models/qwen3_5/test_loading_real.cpp
+  LIBRARIES ninfer_model_loading)
+ninfer_add_test(ninfer_qwen3_5_loading_test
+  SOURCES models/qwen3_5/test_loading.cpp
+  LIBRARIES ninfer_model_loading)
+set_tests_properties(ninfer_qwen3_5_loading_real_test PROPERTIES SKIP_RETURN_CODE 77)
 ninfer_add_test(ninfer_media_decode_test
   SOURCES test_media_decode.cpp
   LIBRARIES ninfer_media_decode)
@@ -71,11 +91,15 @@ ninfer_add_test(ninfer_device_test       SOURCES test_device.cpp)
 ninfer_add_test(ninfer_decode_graph_test SOURCES test_decode_graph.cpp)
 ninfer_add_test(ninfer_tensor_test       SOURCES test_tensor.cpp)
 ninfer_add_test(ninfer_arena_test        SOURCES test_arena.cpp)
-ninfer_add_test(ninfer_admission_policy_test SOURCES test_admission_policy.cpp)
-ninfer_add_test(ninfer_context_cost_test SOURCES test_context_cost.cpp)
-ninfer_add_test(ninfer_resource_manager_test SOURCES test_resource_manager.cpp)
+ninfer_add_test(ninfer_admission_policy_test SOURCES test_admission_policy.cpp
+  LIBRARIES ninfer_runtime_support)
+ninfer_add_test(ninfer_context_cost_test SOURCES test_context_cost.cpp
+  LIBRARIES ninfer_runtime_support)
+ninfer_add_test(ninfer_resource_manager_test SOURCES test_resource_manager.cpp
+  LIBRARIES ninfer_runtime_support)
 ninfer_add_test(ninfer_materialization_budget_test SOURCES test_materialization_budget.cpp)
-ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp)
+ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp
+  LIBRARIES ninfer_runtime_support)
 ninfer_add_test(ninfer_sampling_defaults_test
   SOURCES test_sampling_defaults.cpp
   LIBRARIES ninfer_engine ninfer_core)
@@ -90,7 +114,7 @@ target_include_directories(ninfer_perplexity_evaluation_test PRIVATE
   ${PROJECT_SOURCE_DIR}/apps/perplexity)
 ninfer_add_test(ninfer_cli_options_test
   SOURCES test_cli_options.cpp ${PROJECT_SOURCE_DIR}/apps/cli/options.cpp
-  LIBRARIES ninfer_core ninfer_product_logging)
+  LIBRARIES ninfer_runtime_support ninfer_product_logging)
 target_include_directories(ninfer_cli_options_test PRIVATE ${PROJECT_SOURCE_DIR}/apps/cli)
 ninfer_add_test(ninfer_kv_cache_test
   SOURCES test_kv_cache.cpp
@@ -147,19 +171,17 @@ ninfer_add_test(ninfer_qwen3_6_27b_score_real_test
   SOURCES targets/qwen3_6_27b/test_engine_score_real.cpp
   LIBRARIES ninfer_engine)
 set_tests_properties(ninfer_qwen3_6_27b_score_real_test PROPERTIES SKIP_RETURN_CODE 77)
+ninfer_add_test(ninfer_qwen3_6_27b_vision_workspace_test
+  SOURCES targets/qwen3_6_27b/test_vision_workspace.cpp
+  LIBRARIES ninfer_engine)
+target_include_directories(ninfer_qwen3_6_27b_vision_workspace_test PRIVATE
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
+  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export)
+set_tests_properties(ninfer_qwen3_6_27b_vision_workspace_test PROPERTIES SKIP_RETURN_CODE 77)
 ninfer_add_test(ninfer_qwen3_8_27b_dflash2_real_test
   SOURCES targets/qwen3_6_27b/test_engine_dflash2_real.cpp
   LIBRARIES ninfer_engine)
 set_tests_properties(ninfer_qwen3_8_27b_dflash2_real_test PROPERTIES SKIP_RETURN_CODE 77)
-ninfer_add_test(ninfer_qwen3_6_27b_load_plan_test
-  SOURCES targets/qwen3_6_27b/test_load_plan.cpp
-  NEEDS_SOURCE_DIR
-  LIBRARIES ninfer_engine)
-target_include_directories(ninfer_qwen3_6_27b_load_plan_test PRIVATE
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_27b/export)
-target_link_libraries(ninfer_qwen3_6_27b_load_plan_test PRIVATE CUDA::cudart)
-set_tests_properties(ninfer_qwen3_6_27b_load_plan_test PROPERTIES SKIP_RETURN_CODE 77)
 ninfer_add_test(ninfer_qwen3_6_35b_a3b_real_test
   SOURCES targets/qwen3_6_35b_a3b/test_engine_real.cpp
   LIBRARIES ninfer_engine)
@@ -168,17 +190,6 @@ ninfer_add_test(ninfer_qwen3_6_35b_a3b_dflash_real_test
   SOURCES targets/qwen3_6_35b_a3b/test_engine_dflash_real.cpp
   LIBRARIES ninfer_engine)
 set_tests_properties(ninfer_qwen3_6_35b_a3b_dflash_real_test PROPERTIES SKIP_RETURN_CODE 77)
-ninfer_add_test(ninfer_qwen3_6_35b_a3b_dflash_load_plan_test
-  SOURCES targets/qwen3_6_35b_a3b/test_dflash_load_plan.cpp
-  NEEDS_SOURCE_DIR
-  LIBRARIES ninfer_engine)
-target_include_directories(ninfer_qwen3_6_35b_a3b_dflash_load_plan_test PRIVATE
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6/export
-  ${PROJECT_SOURCE_DIR}/src/targets/qwen3_6_35b_a3b/export)
-target_link_libraries(ninfer_qwen3_6_35b_a3b_dflash_load_plan_test PRIVATE CUDA::cudart)
-set_tests_properties(ninfer_qwen3_6_35b_a3b_dflash_load_plan_test
-  PROPERTIES SKIP_RETURN_CODE 77)
-
 # Product protocol contracts.
 ninfer_add_test(ninfer_openai_schema_test
   SOURCES test_openai_schema.cpp

@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/bf16/bf16_dispatch.h"
 
 #include "ops/linear/bf16/bf16_config.h"

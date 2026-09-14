@@ -1,6 +1,8 @@
+#include "core/weight.h"
 #include "ops/linear_pair/linear_pair_test_common.h"
 
 #include "ninfer/ops/linear_pair.h"
+#include "ninfer/ops/weight_input.h"
 #include "ops/op_tester.h"
 #include "ops/quantized_weight.h"
 
@@ -267,10 +269,23 @@ int run_q8_a16_shape(std::string_view label, const ShapeCase& shape) {
 
     void* const second_payload =
         fixture.shared_payload ? first_device_weight.data() : second_device_weight.data();
-    const Weight first_weight = fixture.first_storage.device_row_view(
-        first_device_weight.data(), fixture.first_row, kOutputRows);
-    const Weight second_weight =
-        second_storage.device_row_view(second_payload, fixture.second_row, kOutputRows);
+    const auto parent = [](const quantized_weight::PackedWeight& source, const void* payload) {
+        const std::array shape{static_cast<std::uint64_t>(source.weight.n),
+                               static_cast<std::uint64_t>(source.weight.k)};
+        return WeightParent{weight_geometry(source.weight.qtype, source.weight.layout, shape),
+                            static_cast<const std::byte*>(payload)};
+    };
+    const auto first_parent  = parent(fixture.first_storage, first_device_weight.data());
+    const auto second_parent = parent(second_storage, second_payload);
+    const auto region        = [](const WeightParent& storage, std::uint64_t row) {
+        const auto k = storage.geometry.shape[1];
+        return WeightView{{kOutputRows, k}, {{&storage, row * k, (row + kOutputRows) * k}}};
+    };
+    const auto first_view = region(first_parent, fixture.first_row);
+    const auto second_view =
+        region(fixture.shared_payload ? first_parent : second_parent, fixture.second_row);
+    const Weight first_weight  = ops::prepare_linear_weight({first_view}).weight;
+    const Weight second_weight = ops::prepare_linear_weight({second_view}).weight;
 
     int failures = 0;
     for (const std::int32_t t : tokens) {

@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear_pair/q8/q8_pair_kernels.h"
 
 #include "core/device.h"

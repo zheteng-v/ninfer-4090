@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/weight.h"
 #include <ninfer/targets/qwen3_6/startup_features.h>
 #include <ninfer/targets/qwen3_6/vision.h>
 

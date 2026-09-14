@@ -1,5 +1,6 @@
 // Cold-cache public Op benchmark for registered Q5 LinearAdd profiles.
 
+#include "core/weight.h"
 #include "ninfer/ops/linear_add.h"
 
 #include "core/device.h"

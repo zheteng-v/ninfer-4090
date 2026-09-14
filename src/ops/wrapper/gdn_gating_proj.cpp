@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/gdn_gating_proj.h"
 
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.h"

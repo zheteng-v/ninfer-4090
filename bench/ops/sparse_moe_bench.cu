@@ -4,6 +4,7 @@
 // private plans, or kernel candidates. Production dispatch remains entirely
 // behind ninfer::ops::sparse_moe().
 
+#include "core/weight.h"
 #include "ninfer/ops/sparse_moe.h"
 
 #include "core/device.h"

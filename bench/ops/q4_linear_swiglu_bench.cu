@@ -1,5 +1,6 @@
 // Cold-cache public Op benchmark for the registered Q4 LinearSwiGLU profile.
 
+#include "core/weight.h"
 #include "ninfer/ops/linear_swiglu.h"
 
 #include "core/device.h"

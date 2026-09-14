@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "core/device.h"
 #include "ops/linear/q8/q8_small_t_mma.cuh"
 #include "ops/linear/q8/q8_rowsplit_gemm_medium_t_splitk.cuh"

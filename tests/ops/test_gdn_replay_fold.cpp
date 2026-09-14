@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/gated_delta_net.h"
 #include "ninfer/ops/gdn_input_proj.h"
 #include "ninfer/ops/gdn_replay.h"

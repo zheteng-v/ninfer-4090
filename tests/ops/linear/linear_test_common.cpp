@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/linear_test_common.h"
 
 #include "core/arena.h"

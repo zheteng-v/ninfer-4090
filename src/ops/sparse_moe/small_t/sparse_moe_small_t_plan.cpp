@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/sparse_moe/small_t/sparse_moe_small_t.h"
 
 #include "core/layout.h"

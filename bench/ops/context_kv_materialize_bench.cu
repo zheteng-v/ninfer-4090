@@ -1,5 +1,6 @@
 // Cold-cache benchmark for the complete DFlash2 five-layer context state transition.
 
+#include "core/weight.h"
 #include "ninfer/ops/context_kv_materialize.h"
 
 #include "ninfer_bench_common.h"

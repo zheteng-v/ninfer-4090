@@ -1,5 +1,6 @@
 // Cold-cache benchmark for the two registered public Q8 LinearPair geometries.
 
+#include "core/weight.h"
 #include "ninfer/ops/linear_pair.h"
 
 #include "core/device.h"

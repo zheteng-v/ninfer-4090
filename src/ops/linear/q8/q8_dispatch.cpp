@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/q8/q8_dispatch.h"
 #include "ops/linear/q8/q8_feature.h"
 

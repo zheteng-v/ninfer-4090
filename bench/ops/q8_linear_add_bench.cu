@@ -1,5 +1,6 @@
 // Cold-cache benchmark and candidate tuner for the Qwen3.6-35B-A3B Q8 LinearAdd Op.
 
+#include "core/weight.h"
 #include "ninfer/ops/linear_add.h"
 #include "ninfer/ops/residual_add.h"
 

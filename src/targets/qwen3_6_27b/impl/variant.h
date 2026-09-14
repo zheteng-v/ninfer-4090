@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/weight.h"
 #include "core/device.h"
 #include "targets/qwen3_6_27b/impl/config.h"
 #include "ninfer/ops/sparse_moe.h"

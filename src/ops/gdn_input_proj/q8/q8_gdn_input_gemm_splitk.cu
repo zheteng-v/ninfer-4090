@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/gdn_input_proj/q8/q8_gdn_input_kernels.h"
 
 #include "core/device.h"

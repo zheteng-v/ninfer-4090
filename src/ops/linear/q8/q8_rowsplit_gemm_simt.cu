@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/q8/q8_rowsplit_gemm_simt.cuh"
 
 #include "ops/common/math.h"

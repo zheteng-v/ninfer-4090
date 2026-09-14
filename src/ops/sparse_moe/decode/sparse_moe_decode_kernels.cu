@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/sparse_moe/decode/sparse_moe_decode.h"
 
 #include "core/device.h"

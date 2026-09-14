@@ -2,6 +2,7 @@
 
 // ninfer::ops - fused residual += W @ x.
 
+#include "core/weight.h"
 #include "core/arena.h"
 #include "core/tensor.h"
 #include "ninfer/ops/linear.h"

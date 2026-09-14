@@ -2,6 +2,7 @@
 
 // ninfer::ops::detail - private launch prototypes for embedding variants.
 
+#include "core/weight.h"
 #include "core/tensor.h"
 
 #include <cuda_runtime.h>

@@ -1,4 +1,5 @@
 // ninfer::ops - embedding launcher: variant grid/block/stream setup.
+#include "core/weight.h"
 #include "ops/launcher/embed_gather.h"
 
 #include "ops/common/math.h"

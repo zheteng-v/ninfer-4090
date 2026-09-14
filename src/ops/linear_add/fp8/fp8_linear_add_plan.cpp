@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear_add/fp8/fp8_linear_add_plan.h"
 
 #include "ops/linear/fp8/fp8_a8_plan.h"

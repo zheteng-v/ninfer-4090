@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear_add/q8/q8_linear_add_plan.h"
 
 #include "ops/linear_add/q8/q8_linear_add_kernels.h"

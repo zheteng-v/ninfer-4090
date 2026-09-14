@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/attn_input_proj/nvfp4/nvfp4_attn_input_plan.h"
 
 #include "ops/linear/nvfp4/nvfp4_config.h"
