@@ -24,6 +24,13 @@ struct Reader::Impl {
         std::array<std::byte, kHeaderBytes> header{};
         file->read_exact(0, header);
         if (!std::equal(kEntryMagic.begin(), kEntryMagic.end(), header.begin())) {
+            if (std::equal(kEntryMagic.begin(), kEntryMagic.end() - 1, header.begin()) &&
+                header[kEntryMagic.size() - 1] == std::byte{2}) {
+                throw ArtifactError(
+                    entry.string() +
+                    ": NInfer v2 artifact is not supported. Upgrade to v3 with: "
+                    "python3 tools/upgrade_ninfer_v2_to_v3.py INPUT.ninfer OUTPUT.ninfer");
+            }
             throw ArtifactError(entry.string() + ": expected NInfer v3 entry magic");
         }
         const auto json_bytes = read_u64_le(header.data() + 8);
