@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -191,15 +192,42 @@ void validate_tokenizer_config(const FrontendResources& resources) {
         throw std::invalid_argument(
             "tokenizer_config.json does not use the official <|endoftext|> pad token");
     }
-    // The artifact's maintained frontend template is authoritative.  Official v3 artifacts may
-    // intentionally carry a compatibility copy of the original Hugging Face template inside
-    // tokenizer_config.json while frontend/chat_template.jinja contains NInfer's fixes.  The
-    // compiled-template allowlist below still rejects unknown frontend templates.
 }
 
-fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resources) {
+fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resources,
+                                               const std::filesystem::path& override_path) {
     validate_tokenizer_config(resources);
-    return fi::CompiledChatTemplate::resolve(resources.chat_template_jinja);
+    nlohmann::ordered_json tokens = nlohmann::ordered_json::object();
+    const auto config             = nlohmann::ordered_json::parse(resources.tokenizer_config_json);
+    for (const char* key : {"bos_token", "eos_token", "pad_token", "unk_token", "sep_token",
+                            "cls_token", "mask_token"}) {
+        if (!config.contains(key) || config[key].is_null()) continue;
+        const auto& value = config[key];
+        if (value.is_string())
+            tokens[key] = value;
+        else if (value.is_object() && value.contains("content"))
+            tokens[key] = value.at("content");
+    }
+    if (config.contains("additional_special_tokens"))
+        tokens["additional_special_tokens"] = config["additional_special_tokens"];
+    std::string source(resources.chat_template_jinja);
+    std::string name = "artifact:chat_template.jinja";
+    if (!override_path.empty()) {
+        name = override_path.string();
+        std::ifstream file(override_path, std::ios::binary | std::ios::ate);
+        if (!file) throw std::invalid_argument("cannot read chat template: " + name);
+        const auto size = file.tellg();
+        if (size <= 0 || size > 16 * 1024 * 1024) {
+            throw std::invalid_argument(
+                "chat template must be a nonempty UTF-8 source file up to 16 MiB: " + name);
+        }
+        source.resize(static_cast<std::size_t>(size));
+        file.seekg(0);
+        if (!file.read(source.data(), static_cast<std::streamsize>(source.size()))) {
+            throw std::invalid_argument("cannot read chat template: " + name);
+        }
+    }
+    return fi::CompiledChatTemplate::resolve(source, std::move(name), std::move(tokens));
 }
 
 [[noreturn]] void throw_processor_error(const fi::ProcessorError& error) {
@@ -272,12 +300,13 @@ std::vector<fi::ChatMessage> convert_messages(std::vector<ChatMessage> messages)
 
 fi::ChatRenderOptions render_options(const PromptOptions& options,
                                      std::span<const PromptCacheMarker> cache_markers = {}) {
-    fi::ChatRenderOptions rendered{.continuation      = options.continuation,
-                                   .enable_thinking   = options.enable_thinking,
-                                   .reasoning_effort  = options.reasoning_effort,
-                                   .preserve_thinking = options.preserve_thinking,
-                                   .add_vision_id     = options.add_vision_id,
-                                   .tool_jsons        = options.tool_jsons};
+    fi::ChatRenderOptions rendered{.continuation              = options.continuation,
+                                   .enable_thinking           = options.enable_thinking,
+                                   .reasoning_effort          = options.reasoning_effort,
+                                   .preserve_thinking         = options.preserve_thinking,
+                                   .chat_template_kwargs_json = options.chat_template_kwargs_json,
+                                   .add_vision_id             = options.add_vision_id,
+                                   .tool_jsons                = options.tool_jsons};
     rendered.cache_markers.assign(cache_markers.begin(), cache_markers.end());
     return rendered;
 }
@@ -556,7 +585,8 @@ ModelSamplingDefaults default_sampling(Architecture architecture) {
 class Frontend::Impl {
 public:
     Impl(const FrontendResources& resources, FrontendOptions options)
-        : chat_template(compile_chat_template(resources)), tokenizer(resources.tokenizer),
+        : chat_template(compile_chat_template(resources, options.chat_template_path)),
+          tokenizer(resources.tokenizer),
           processor(options.vision_enabled ? processor_options(resources) : fi::ProcessorOptions{}),
           vision_enabled(options.vision_enabled), max_context(options.max_context) {
         if (options.max_context == 0) {
@@ -652,8 +682,9 @@ PreparedPrompt& PreparedPrompt::operator=(PreparedPrompt&&) noexcept = default;
 
 PromptSummary PreparedPrompt::summary() const {
     if (data_ == nullptr) { throw std::logic_error("prepared prompt is empty"); }
-    return PromptSummary{.prompt_tokens = checked_token_count(data_->token_ids.size()),
-                         .has_media     = data_->has_media()};
+    return PromptSummary{.starts_in_reasoning = data_->starts_in_reasoning,
+                         .prompt_tokens       = checked_token_count(data_->token_ids.size()),
+                         .has_media           = data_->has_media()};
 }
 
 PromptPreparationStats PreparedPrompt::preparation_stats() const noexcept {
@@ -760,10 +791,11 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
                                   control, impl_->max_context);
         } catch (const fi::ProcessorError& error) { throw_processor_error(error); }
         result.token_ids.assign(processed.input_ids.begin(), processed.input_ids.end());
-        result.token_types    = std::move(processed.token_types);
-        result.positions      = std::move(processed.positions);
-        result.rope_delta     = processed.rope_delta;
-        result.media_payloads = std::move(processed.media_payloads);
+        result.starts_in_reasoning = processed.starts_in_reasoning;
+        result.token_types         = std::move(processed.token_types);
+        result.positions           = std::move(processed.positions);
+        result.rope_delta          = processed.rope_delta;
+        result.media_payloads      = std::move(processed.media_payloads);
         result.vision_items.reserve(processed.vision_items.size());
         for (fi::VisionItem& item : processed.vision_items) {
             result.vision_items.push_back(convert_vision_item(std::move(item)));
@@ -789,8 +821,9 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         message_boundaries = std::move(processed.message_boundaries);
         cache_boundaries   = std::move(processed.cache_boundaries);
     } else {
-        const fi::RenderedChat rendered =
-            impl_->chat_template.render(messages, render_options(options, rendered_markers));
+        const fi::RenderedChat rendered = impl_->chat_template.render(
+            messages, render_options(options, rendered_markers), control);
+        result.starts_in_reasoning  = rendered.starts_in_reasoning;
         const auto tokenize_started = Clock::now();
         fi::EncodedChat encoded     = fi::encode_rendered_chat(
             *impl_->tokenizer, rendered, static_cast<std::size_t>(impl_->max_context) + 1U);
@@ -814,8 +847,6 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         std::move(cache_hints), message_count, message_boundaries, rendered_markers,
         cache_boundaries, result.vision_items, engine_tool_marker_index, leading_boundary,
         checked_token_count(result.token_ids.size()));
-    result.starts_in_reasoning =
-        options.continuation == PromptContinuationMode::NewAssistantTurn && options.enable_thinking;
     result.prepare.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     return PreparedPrompt(std::move(prepared));
 }
@@ -832,7 +863,7 @@ std::uint32_t Frontend::count_tokens(PromptInput input, const PreparationControl
     }
     if (!has_media) {
         const fi::RenderedChat rendered =
-            impl_->chat_template.render(messages, render_options(options));
+            impl_->chat_template.render(messages, render_options(options), control);
         const std::uint32_t count = checked_token_count(
             fi::encode_rendered_chat(*impl_->tokenizer, rendered).input_ids.size());
         fi::check_preparation_control(control, "tokenization");
@@ -845,10 +876,6 @@ std::uint32_t Frontend::count_tokens(PromptInput input, const PreparationControl
         return checked_token_count(
             processor.count_tokens(std::move(messages), render_options(options), control));
     } catch (const fi::ProcessorError& error) { throw_processor_error(error); }
-}
-
-PromptCapabilities Frontend::prompt_capabilities() const noexcept {
-    return impl_ != nullptr ? impl_->chat_template.capabilities() : PromptCapabilities{};
 }
 
 MediaCacheSummary Frontend::media_cache_summary() const {

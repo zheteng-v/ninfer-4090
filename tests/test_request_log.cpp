@@ -262,7 +262,7 @@ int main() {
     PreparedRequest prepared;
     prepared.enable_thinking                           = true;
     prepared.thinking_budget                           = 256;
-    prepared.effective_reasoning_effort                = ninfer::ReasoningEffort::XHigh;
+    prepared.reasoning_effort                          = ninfer::ReasoningEffort::XHigh;
     prepared.preserve_thinking                         = true;
     prepared.sampling.temperature                      = 0.6F;
     prepared.sampling.top_p                            = 0.95F;
@@ -295,12 +295,13 @@ int main() {
             "xhigh, budget 256 | media 1, prepared 120 ms | preserve thinking",
         "pretty request-start record mismatch");
     RequestLogContext default_thinking = context;
-    default_thinking.resolved_reasoning_effort.reset();
+    default_thinking.requested_reasoning_effort.reset();
     default_thinking.thinking_budget.reset();
     const std::string default_thinking_start = render_request_start(default_thinking).message;
-    failures += check(default_thinking_start.find("thinking on") != std::string::npos &&
-                          default_thinking_start.find("unresolved") == std::string::npos,
-                      "default thinking state leaks an internal resolution detail");
+    failures +=
+        check(default_thinking_start.find("thinking template default") != std::string::npos &&
+                  default_thinking_start.find("unresolved") == std::string::npos,
+              "default thinking state leaks an internal resolution detail");
     const Json started = Json::parse(format_request_start_json("serve-test", 2000, context));
     failures +=
         check(started.at("request").at("request_id") == 7, "request id missing from start record");
@@ -310,8 +311,8 @@ int main() {
                       "resolved thinking mode missing");
     failures += check(started.at("request").at("thinking_budget") == 256,
                       "resolved thinking budget missing");
-    failures += check(started.at("request").at("requested_reasoning_effort").is_null() &&
-                          started.at("request").at("resolved_reasoning_effort") == "xhigh",
+    failures += check(started.at("request").at("requested_reasoning_effort") == "xhigh" &&
+                          !started.at("request").contains("resolved_reasoning_effort"),
                       "requested and resolved reasoning effort are not distinguished");
     failures += check(started.at("request").at("preserve_thinking") == true &&
                           started.at("request").at("preserve_thinking_semantic_change") == true,
@@ -345,7 +346,7 @@ int main() {
                           rejected.at("request").at("message_count") == 2,
                       "preparation rejection request shape missing");
     failures += check(rejected.at("request").at("requested_reasoning_effort") == "high" &&
-                          rejected.at("request").at("resolved_reasoning_effort").is_null(),
+                          !rejected.at("request").contains("resolved_reasoning_effort"),
                       "rejection log fabricated a resolved reasoning effort");
     failures += check(rejected.at("error").at("status") == 400 &&
                           rejected.at("error").at("code") == "context_length_exceeded" &&

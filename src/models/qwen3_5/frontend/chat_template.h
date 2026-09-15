@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/qwen3_5/frontend/tokenizer.h"
+#include "text/jinja.h"
 
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 #include <ninfer/types.h>
@@ -47,12 +48,6 @@ struct MediaTokenRunByteSpec {
     std::size_t frame_index = 0;
 };
 
-struct RenderedFragment {
-    std::string text;
-    std::vector<ByteSpan> literal_spans;
-    std::vector<MediaPlaceholderByteSpec> media_placeholders;
-};
-
 struct MediaData {
     std::vector<std::uint8_t> bytes;
     std::string media_type;
@@ -94,10 +89,6 @@ struct ChatMessage {
     std::string tool_call_id;
 
     [[nodiscard]] bool has_media() const noexcept;
-    [[nodiscard]] RenderedFragment
-    rendered_content(bool add_vision_id = false, int* image_count = nullptr,
-                     int* video_count = nullptr, std::size_t* media_count = nullptr,
-                     std::vector<std::size_t>* part_boundaries = nullptr) const;
 };
 
 struct ChatRenderOptions {
@@ -105,9 +96,10 @@ struct ChatRenderOptions {
     // Internal renderer control used by frontend qualification. Product PromptInput always
     // selects either a new assistant turn or continuation of the final assistant.
     bool add_generation_prompt = true;
-    bool enable_thinking       = true;
+    std::optional<bool> enable_thinking;
     std::optional<ReasoningEffort> reasoning_effort;
     std::optional<bool> preserve_thinking;
+    std::string chat_template_kwargs_json;
     bool add_vision_id = false;
     std::vector<std::string> tool_jsons;
     std::vector<PromptCacheMarker> cache_markers;
@@ -120,7 +112,7 @@ struct RewriteCheckpointByteSpec {
 
 struct RenderedChat {
     std::string text;
-    std::vector<ByteSpan> literal_spans;
+    bool starts_in_reasoning = false;
     std::vector<MediaPlaceholderByteSpec> media_placeholders;
     std::vector<MediaTokenRunByteSpec> media_token_runs;
     std::optional<RewriteCheckpointByteSpec> rewrite_checkpoint;
@@ -133,24 +125,21 @@ struct RenderedChat {
     std::vector<std::optional<std::size_t>> cache_boundaries;
 };
 
-enum class ChatTemplateSemantics : std::uint8_t {
-    ThinkingToggle,
-    ReasoningEffort,
-};
-
 class CompiledChatTemplate {
 public:
-    [[nodiscard]] static CompiledChatTemplate resolve(std::string_view source);
-
-    [[nodiscard]] PromptCapabilities capabilities() const noexcept;
+    [[nodiscard]] static CompiledChatTemplate
+    resolve(std::string_view source, std::string source_name = "chat_template.jinja",
+            nlohmann::ordered_json special_tokens = nlohmann::ordered_json::object());
     [[nodiscard]] RenderedChat render(const std::vector<ChatMessage>& messages,
-                                      ChatRenderOptions options = {}) const;
+                                      ChatRenderOptions options         = {},
+                                      const PreparationControl& control = {}) const;
 
 private:
-    explicit CompiledChatTemplate(ChatTemplateSemantics semantics) noexcept
-        : semantics_(semantics) {}
+    CompiledChatTemplate(text::JinjaTemplate compiled, nlohmann::ordered_json special_tokens)
+        : compiled_(std::move(compiled)), special_tokens_(std::move(special_tokens)) {}
 
-    ChatTemplateSemantics semantics_;
+    text::JinjaTemplate compiled_;
+    nlohmann::ordered_json special_tokens_;
 };
 
 } // namespace ninfer::models::qwen3_5::frontend

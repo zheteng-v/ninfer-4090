@@ -142,7 +142,8 @@ ModelInstance::ModelInstance(std::unique_ptr<models::qwen3_5::Model> source,
                              const EngineOptions& options)
     : model(std::move(source)), parameters(*model),
       frontend(models::qwen3_5::make_frontend(
-          model->resources(), {.architecture             = model->config().text.architecture,
+          model->resources(), {.chat_template_path       = options.chat_template_path,
+                               .architecture             = model->config().text.architecture,
                                .vision_enabled           = options.enable_vision,
                                .max_context              = options.max_context,
                                .media_cache_bytes        = options.media_cache_bytes,

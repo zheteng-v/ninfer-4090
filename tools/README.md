@@ -29,6 +29,7 @@ artifacts. The input paths are placeholders for local checkpoint checkouts:
 python3 -m tools.convert \
   --model /path/to/Qwen3.6-27B \
   --recipe qwen3_6_27b --components text,vision,mtp --proposal \
+  --resource chat_template.jinja=tools/chat_templates/qwen3_6.jinja \
   --name qwen3.6-27b \
   --out out/qwen3_6_27b.ninfer
 
@@ -36,6 +37,7 @@ python3 -m tools.convert \
   --model /path/to/Qwen3.8-27B \
   --recipe qwen3_8_27b --components text,vision,mtp,dflash2 --proposal \
   --source dflash2=/path/to/Qwen3.8-27B-DFlash2 \
+  --resource chat_template.jinja=tools/chat_templates/qwen3_8.jinja \
   --name qwen3.8-27b \
   --out out/qwen3_8_27b.ninfer
 
@@ -43,6 +45,7 @@ python3 -m tools.convert \
   --model /path/to/Qwen3.6-35B-A3B-base \
   --recipe qwen3_6_35b_a3b --components text,vision,mtp,dflash --proposal \
   --source dflash=/path/to/Qwen3.6-35B-A3B-DFlash \
+  --resource chat_template.jinja=tools/chat_templates/qwen3_6.jinja \
   --name qwen3.6-35b-a3b \
   --out out/qwen3_6_35b_a3b.ninfer
 ```

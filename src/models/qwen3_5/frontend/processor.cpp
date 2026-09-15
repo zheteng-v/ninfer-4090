@@ -590,15 +590,6 @@ RenderedChat expand_placeholders(RenderedChat rendered, const std::vector<Vision
     for (std::optional<std::size_t>& boundary : rendered.cache_boundaries) {
         if (boundary) { *boundary = map_boundary(*boundary, "cache boundary"); }
     }
-    std::vector<ByteSpan> mapped_literal_spans;
-    mapped_literal_spans.reserve(rendered.literal_spans.size());
-    for (const ByteSpan span : rendered.literal_spans) {
-        mapped_literal_spans.push_back(ByteSpan{
-            .begin = map_boundary(span.begin, "literal span"),
-            .end   = map_boundary(span.end, "literal span"),
-        });
-    }
-    rendered.literal_spans = std::move(mapped_literal_spans);
     rendered.media_placeholders.clear();
     rendered.text = std::move(expanded);
     return rendered;
@@ -769,8 +760,7 @@ EncodedChat encode_rendered_chat(const Tokenizer& tokenizer, const RenderedChat&
     }
 
     BoundaryEncodedText tokenized = tokenizer.encode_with_boundaries(
-        rendered.text, byte_boundaries, EncodeOptions{.max_tokens = maximum_tokens},
-        rendered.literal_spans);
+        rendered.text, byte_boundaries, EncodeOptions{.max_tokens = maximum_tokens});
     encoded.input_ids = std::move(tokenized.input_ids);
     if (encoded.input_ids.size() == maximum_tokens) { return encoded; }
     std::size_t boundary_index = 0;
@@ -782,15 +772,11 @@ EncodedChat encode_rendered_chat(const Tokenizer& tokenizer, const RenderedChat&
     };
     if (rendered.rewrite_checkpoint) {
         const TokenBoundaryResult& boundary = tokenized.boundaries.at(boundary_index++);
-        if (!boundary.exact_frontier) {
-            throw std::logic_error("rewrite checkpoint is not an exact token boundary");
+        if (boundary.exact_frontier && *boundary.exact_frontier > 0) {
+            encoded.rewrite_checkpoint = RewriteCheckpointSpec{
+                .kind     = rendered.rewrite_checkpoint->kind,
+                .frontier = to_frontier(*boundary.exact_frontier, "rewrite checkpoint")};
         }
-        const std::uint32_t frontier = to_frontier(*boundary.exact_frontier, "rewrite checkpoint");
-        if (frontier == 0) {
-            throw std::logic_error("rewrite checkpoint has an empty token prefix");
-        }
-        encoded.rewrite_checkpoint =
-            RewriteCheckpointSpec{.kind = rendered.rewrite_checkpoint->kind, .frontier = frontier};
     }
     encoded.rewrite_execution_frontiers.reserve(rendered.rewrite_execution_boundaries.size());
     for (std::size_t remaining = rendered.rewrite_execution_boundaries.size(); remaining != 0;
@@ -820,8 +806,9 @@ EncodedChat encode_rendered_chat(const Tokenizer& tokenizer, const RenderedChat&
     for (std::size_t index = 0; index < rendered.cache_boundaries.size(); ++index) {
         if (rendered.cache_boundaries[index]) {
             const TokenBoundaryResult& boundary = tokenized.boundaries.at(boundary_index++);
-            encoded.cache_boundaries[index] =
-                to_frontier(boundary.stable_frontier, "cache boundary");
+            if (boundary.exact_frontier)
+                encoded.cache_boundaries[index] =
+                    to_frontier(*boundary.exact_frontier, "cache boundary");
         }
     }
     encoded.media_token_runs.reserve(rendered.media_token_runs.size());
@@ -880,7 +867,7 @@ std::size_t Processor::count_tokens(std::vector<ChatMessage> messages,
     check_preparation_control(control);
     const std::vector<ChatPart*> parts = media_parts(messages);
     (void)validate_media_inputs(parts, options_);
-    RenderedChat rendered = chat_template_.render(messages, std::move(render_options));
+    RenderedChat rendered = chat_template_.render(messages, std::move(render_options), control);
     MediaPreparationPermit request_permit = media_cache_->acquire_request(control);
     const media::decode::Policy policy{
         .max_bytes                  = options_.max_encoded_media_bytes,
@@ -921,7 +908,7 @@ ProcessedInput Processor::process(std::vector<ChatMessage> messages,
     check_preparation_control(control);
     const std::vector<ChatPart*> parts = media_parts(messages);
     const std::size_t media_bytes      = validate_media_inputs(parts, options_);
-    RenderedChat rendered              = chat_template_.render(messages, std::move(render_options));
+    RenderedChat rendered = chat_template_.render(messages, std::move(render_options), control);
     const std::size_t encode_limit =
         maximum_prompt_tokens == std::numeric_limits<std::size_t>::max()
             ? maximum_prompt_tokens
@@ -932,8 +919,7 @@ ProcessedInput Processor::process(std::vector<ChatMessage> messages,
         const std::size_t preliminary_tokens =
             tokenizer_
                 .encode_with_boundaries(rendered.text, {},
-                                        EncodeOptions{.max_tokens = encode_limit},
-                                        rendered.literal_spans)
+                                        EncodeOptions{.max_tokens = encode_limit})
                 .input_ids.size();
         preliminary_tokenize_seconds =
             std::chrono::duration<double>(Clock::now() - preliminary_started).count();
@@ -1073,6 +1059,7 @@ ProcessedInput Processor::process(std::vector<ChatMessage> messages,
                              "prepared prompt exceeds Engine max_context " +
                                  std::to_string(maximum_prompt_tokens));
     }
+    output.starts_in_reasoning         = rendered.starts_in_reasoning;
     output.input_ids                   = std::move(encoded.input_ids);
     output.rewrite_checkpoint          = encoded.rewrite_checkpoint;
     output.rewrite_execution_frontiers = std::move(encoded.rewrite_execution_frontiers);

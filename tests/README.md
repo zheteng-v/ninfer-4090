@@ -37,6 +37,7 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+The chat-template reference test uses Python Jinja2.
 Run a focused target for a localized change:
 
 ```bash

@@ -81,8 +81,8 @@ enum value_compare_op { eq, ge, gt, lt, ne };
 bool value_compare(const value& a, const value& b, value_compare_op op);
 
 struct value_t {
-    int64_t val_int;
-    double val_flt;
+    int64_t val_int = 0;
+    double val_flt  = 0;
     string val_str;
 
     std::vector<value> val_arr;
@@ -90,14 +90,7 @@ struct value_t {
 
     func_handler val_func;
 
-    // only used if ctx.is_get_stats = true
-    struct stats_t {
-        bool used = false;
-        // ops can be builtin calls or operators: "array_access", "object_access"
-        std::set<std::string> ops;
-        // utility to recursively mark value and its children as used
-        static void mark_used(value& val, bool deep = false);
-    } stats;
+    uint32_t origin = 0; // optional whole-value output origin
 
     value_t()               = default;
     value_t(const value_t&) = default;
@@ -190,7 +183,8 @@ protected:
 const func_builtins& global_builtins();
 
 std::string value_to_json(const value& val, int indent = -1, const std::string_view item_sep = ", ",
-                          const std::string_view key_sep = ": ");
+                          const std::string_view key_sep = ": ", bool ensure_ascii = false,
+                          bool sort_keys = false);
 
 // Note: only used for debugging purposes
 std::string value_to_string_repr(const value& val);
@@ -275,12 +269,7 @@ struct value_float_t : public value_t {
 
     virtual int64_t as_int() const override { return val_int; }
 
-    virtual string as_string() const override {
-        std::string out = std::to_string(val_flt);
-        out.erase(out.find_last_not_of('0') + 1, std::string::npos); // remove trailing zeros
-        if (out.back() == '.') out.push_back('0'); // leave one zero if no decimals
-        return out;
-    }
+    string as_string() const override;
 
     virtual bool as_bool() const override { return val_flt != 0.0; }
 
@@ -322,14 +311,6 @@ struct value_string_t : public value_t {
 
     virtual string as_string() const override { return val_str; }
 
-    virtual std::string as_repr() const override {
-        std::ostringstream ss;
-        for (const auto& part : val_str.parts) {
-            ss << (part.is_input ? "INPUT: " : "TMPL:  ") << part.val << "\n";
-        }
-        return ss.str();
-    }
-
     virtual bool as_bool() const override { return val_str.length() > 0; }
 
     virtual const func_builtins& get_builtins() const override;
@@ -344,7 +325,6 @@ struct value_string_t : public value_t {
         return hash;
     }
 
-    void mark_input() { val_str.mark_input(); }
 protected:
     virtual bool equivalent(const value_t& other) const override {
         return typeid(*this) == typeid(other) && val_str.str() == other.val_str.str();
@@ -365,6 +345,8 @@ struct value_bool_t : public value_t {
     virtual std::string type() const override { return "Boolean"; }
 
     virtual int64_t as_int() const override { return val_int; }
+
+    double as_float() const override { return val_flt; }
 
     virtual bool as_bool() const override { return val_int; }
 
@@ -677,6 +659,8 @@ struct value_undefined_t : public value_t {
     }
 
     virtual bool is_undefined() const override { return true; }
+
+    string as_string() const override { return {}; }
 
     virtual bool as_bool() const override { return false; }
 

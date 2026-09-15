@@ -18,6 +18,7 @@ namespace ninfer::models::qwen3_5 {
 [[nodiscard]] ModelSamplingDefaults default_sampling(Architecture architecture);
 
 struct FrontendOptions {
+    std::filesystem::path chat_template_path;
     Architecture architecture              = Architecture::Qwen3_5;
     bool vision_enabled                    = true;
     std::uint32_t max_context              = 2'048;
@@ -71,7 +72,6 @@ public:
     [[nodiscard]] PreparedPrompt prepare_tokens(std::vector<TokenId> token_ids,
                                                 bool allow_prefix_identity = true) const;
     [[nodiscard]] std::vector<TokenId> tokenize_text(std::string_view text) const;
-    [[nodiscard]] PromptCapabilities prompt_capabilities() const noexcept;
     [[nodiscard]] MediaCacheSummary media_cache_summary() const;
     [[nodiscard]] OutputSession
     make_output_session(const PreparedPrompt& prompt, const StopPolicy& caller_stop,

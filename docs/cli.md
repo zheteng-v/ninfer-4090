@@ -38,11 +38,18 @@ failures remain direct command diagnostics:
   > answer.txt 2> run.log
 ```
 
-Thinking is enabled by default. If the chat template embedded in the loaded artifact exposes
-reasoning effort, `--reasoning-effort low|medium|xhigh` selects it; omitting the option uses the
-template's default. An artifact whose template does not expose effort rejects the option. Add
-`--no-thinking` for direct-response prompt rendering; it cannot be combined with
-`--reasoning-effort`. `--greedy` selects exact argmax decoding independently.
+`--chat-template FILE` overrides the artifact's built-in template with a local Jinja file.
+Changes to the file take effect after restarting NInfer:
+
+```bash
+./build/apps/ninfer models/qwen3_8_27b.ninfer \
+  --chat-template tools/chat_templates/qwen3_8.jinja --prompt "Hello"
+```
+
+Omitted thinking and effort options use the selected template's defaults. `--no-thinking` or
+`--reasoning-effort none` requests disabled thinking; other effort values cannot be combined with
+`--no-thinking`. The template interprets the selected effort. `--greedy` selects exact argmax
+decoding independently.
 
 `--thinking-budget N` places a positive upper bound on accepted model-origin tokens while the
 new-turn Qwen thinking block remains open. If the model has not emitted `</think>` at that exact
@@ -135,8 +142,8 @@ Run message files from the repository root when they contain repository-relative
 ```
 
 Supported roles are `system`, `developer`, `user`, `assistant`, and `tool`.
-System and developer messages retain their array positions; the Qwen family frontend renders both
-as system-class ChatML turns rather than moving later instructions to the beginning.
+The selected template formats these roles. The maintained Qwen templates keep system/developer
+messages at their input positions.
 
 Message content may be a string or an ordered array containing:
 
@@ -209,9 +216,10 @@ The table lists executable defaults. The examples above select FP8 KV and MTP3.
 | `--lm-head-draft` | optimized proposal head | off |
 | `--vision` | enable image/video input and load Vision GPU allocations | off |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
-| `--no-thinking` | disable thinking in prompt rendering | thinking on |
+| `--chat-template FILE` | use a local Jinja template | artifact template |
+| `--no-thinking` | disable thinking | template default |
 | `--thinking-budget N` | positive model-origin thinking-token cap; omitted means unlimited | unset |
-| `--reasoning-effort low\|medium\|xhigh` | select an effort exposed by the loaded chat template | template default |
+| `--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max` | pass an effort value to the selected template | template default |
 | `--greedy` | exact argmax decoding | off |
 | `--temperature F` | sampling temperature override | registered model/mode default |
 | `--top-p F` | nucleus-threshold override | registered model/mode default |

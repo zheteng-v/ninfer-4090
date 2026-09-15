@@ -192,8 +192,7 @@ template cannot represent.
 
 For commonly generated OpenAI-compatible payloads, `repetition_penalty` is accepted only at its
 neutral value `1`, and `mm_processor_kwargs` when empty or containing only null values. String-form
-image/video URLs are also accepted. Other non-null `chat_template_kwargs` are rejected rather than
-silently changing prompt semantics.
+image/video URLs are also accepted.
 
 Malformed protocol values return field-specific HTTP 400 errors. Invalid media sources, bytes, or
 decoded content use `invalid_media`; remote fetch and timeout failures retain their dedicated
@@ -221,10 +220,8 @@ String parameters preserve function/tool-call markers and balanced nested
 so an unmatched nested parameter opener or a standalone `</parameter>` cannot be represented
 unambiguously; either causes the complete tool-call region to fall back to ordinary content.
 
-Message roles retain their input order through schema translation. The Qwen family frontend maps
-both `system` and `developer` to system-class ChatML blocks at their original positions; it does not
-move later instructions to the beginning of the conversation. A leading instruction keeps the
-artifact template's existing tool/reasoning-instruction composition.
+Messages enter the selected template in their input order. The maintained Qwen templates keep
+system/developer messages at their original positions.
 
 Prompt-bearing JSON objects retain their received member order through request parsing and prompt
 rendering, including tool schemas and historical tool inputs. Canonical model-origin tool arguments
@@ -233,20 +230,18 @@ the same ordered tool call. NInfer does not canonicalize semantically equivalent
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
 
-At startup, NInfer resolves prompt capabilities from the exact `frontend/chat_template.jinja`
-resource embedded in the loaded artifact. It does not infer them from the request's `model` field,
-the artifact identity, or a target profile. A recognized effort-capable template exposes `low`,
-`medium`, and `xhigh`; omitting effort uses that template's declared default. An explicit effort
-not exposed by the loaded template returns HTTP 400 with code
-`reasoning_effort_not_supported` before prompt preparation.
+`--chat-template FILE` selects a local Jinja template; by default, the server uses the template
+stored in the artifact. See the [CLI guide](cli.md#text-input) for an example.
 
-`--default-thinking-budget N` sets a positive process default for requests whose final resolved
-prompt semantics enable thinking. It does not add or reinterpret an HTTP request field: the
-existing `reasoning_effort` and `enable_thinking` inputs still decide whether thinking is enabled,
-and a request resolved to non-thinking receives no cap. `--no-thinking` may coexist with this
-option because a protocol request can explicitly enable thinking. Anthropic
-`thinking:{"type":"enabled","budget_tokens":N}` supplies a request-specific budget instead of
-this process default.
+`chat_template_kwargs` passes a JSON object to the template in Chat Completions, Responses and
+Anthropic Messages. Values duplicated in typed request fields must agree. Null standard options
+mean unspecified; other null values remain `none`. Messages, tools, generation mode and tokenizer
+special tokens cannot be overridden through kwargs.
+
+`--default-thinking-budget N` sets a positive default thinking-token cap for requests that start
+in thinking mode. Non-thinking requests receive no cap. It may coexist with `--no-thinking`
+because requests can explicitly enable thinking. Anthropic
+`thinking:{"type":"enabled","budget_tokens":N}` overrides this default for that request.
 
 Add `--default-thinking-budget 512` to the startup command to cap model-origin thinking at 512
 tokens for every thinking-enabled request.
@@ -261,18 +256,15 @@ post-close model token, preparation is rejected with HTTP 400 code
 `thinking_budget_capacity_insufficient` rather than partially inserting control. The server does
 not promise that the model will emit nonempty content or a tool call after the marker.
 
-For Chat Completions, `reasoning_effort: "none"` disables thinking. `low`, `medium`, and `xhigh`
-select the corresponding template effort when available. The other OpenAI protocol values
-`minimal`, `high`, and `max` are parsed but rejected when the loaded template does not expose them.
-`enable_thinking` controls the same new-turn thinking switch; a contradictory combination with
-`reasoning_effort` returns `conflicting_template_option`. The aliases under `chat_template_kwargs`
-are the llama.cpp and vLLM spellings. When an option is supplied both at the top level and under
-`chat_template_kwargs`, the values must agree.
+For Chat Completions, `reasoning_effort: "none"` requests disabled thinking. The selected template
+interprets the other standard values (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`).
+Conflicting explicit `enable_thinking` and effort values return `conflicting_template_option`.
+The aliases under `chat_template_kwargs` are the llama.cpp and vLLM spellings. When an option is
+supplied both at the top level and under `chat_template_kwargs`, the values must agree.
 
-`preserve_thinking` controls whether reasoning from closed assistant turns remains in later
-prompts. It defaults to the server setting, which is off unless `--preserve-thinking` is used. If
-both OpenAI spellings are present they must carry the same boolean value. Unknown non-null
-`chat_template_kwargs` are rejected.
+`preserve_thinking` controls reasoning retention according to the selected template. Request
+options override server defaults set with `--no-thinking` and `--preserve-thinking`. Unspecified
+thinking, effort and preservation options use the template's defaults.
 
 Streaming begins with an assistant-role chunk, sends separate reasoning and content deltas, then a
 finish-reason chunk and `[DONE]`. When `stream_options.include_usage` is true, a final empty
@@ -462,9 +454,9 @@ wire response contains typed `output` Items.
 | `top_p` | finite number in `[0,1]` |
 | `metadata` | at most 16 string pairs; keys at most 64 characters and values at most 512 |
 | `client_metadata` | Codex client extension; an object or `null`, accepted as opaque tracing metadata with no generation effect |
-| `reasoning.effort` | `none` disables thinking; `low`, `medium`, or `xhigh` selects an effort exposed by the loaded chat template; `minimal`, `high`, and `max` return `reasoning_effort_not_supported` for the registered templates |
-| `chat_template_kwargs.preserve_thinking` | optional boolean controlling whether closed-turn reasoning remains in reconstructed prompts |
-| `preserve_thinking` | top-level alias for the same option; conflicting values are rejected |
+| `reasoning.effort` | `none` requests disabled thinking; other standard effort values pass to the selected template |
+| `chat_template_kwargs` | template parameters as a JSON object; standard options merge with typed fields |
+| `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
 | `text.format` | omitted or `{"type":"text"}` only |
 | `tools` | direct function definitions or namespace groups containing function definitions; see below |
 | `tool_choice` | `auto`, `none`, or function-only `allowed_tools` with mode `auto`; a namespaced selection carries both `namespace` and `name` |
@@ -734,8 +726,8 @@ before closing the block. Request lowering reconstructs the local prompt from th
 remains usable across serve restarts.
 `display:"omitted"` is rejected because NInfer cannot provide Anthropic's
 encrypted hidden-reasoning restore semantics. `preserve_thinking` remains a NInfer extension for
-closed-turn Qwen reasoning history. `output_config.effort` is checked against the loaded template's
-declared effort capability.
+closed-turn reasoning history. `output_config.effort` passes its protocol-validated value to the
+selected template.
 
 User-defined, non-strict tools support `name`, `description`, object `input_schema`, and
 `input_examples`. `tool_choice:auto` and `none` are executable. Forced or named choice,
@@ -906,16 +898,14 @@ they do not infer request behavior from process-global counter deltas.
 | Event | Contents |
 |---|---|
 | `server_start` | artifact path, architecture, public name, actual formats and prefill signature; resolved Engine and context-cache capacities, thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
-| `request_start` | protocol, resolved sampler and seed, requested and effective reasoning effort, thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape |
-| `request_rejected` | parsed request shape, requested reasoning effort with unresolved effective value, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
+| `request_start` | protocol, resolved sampler and seed, requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape |
+| `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |
 | `request_error` | the resolved request configuration and the generation, cancellation, or pre-outcome transport terminal message |
 | `throughput` | interval token/decode/context-cache pressure counter deltas, authoritative worker Host-work deltas, current scheduler/resource gauges, and decode-round batch statistics |
 
-`requested_reasoning_effort` is the client value or `null` when omitted.
-`resolved_reasoning_effort` is `none`, a native effort tier, or `null` when thinking is enabled but
-the template has no tiered default. A preparation rejection always leaves the resolved field
-`null`.
+`requested_reasoning_effort` and `preserve_thinking` record the explicit options, or `null` when
+unspecified. `enable_thinking` records whether the response starts in thinking mode.
 
 `request_done.result.tool_call_parse` records whether a complete marker was seen, the structured
 call count, empty non-string arguments omitted during normalization, schema-mismatched arguments

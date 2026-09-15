@@ -9,6 +9,23 @@ Run the commands below from the repository root in a Python 3.11 environment wit
 NumPy. Conversion uses CUDA by default; `--device cpu` selects CPU conversion. The input paths are
 placeholders for your local checkpoint directories.
 
+## Upgrade an existing v2 artifact
+
+The offline upgrade tool supports the official Qwen3.6/3.8-27B groupwise-int and NVFP4 artifacts,
+and Qwen3.6-35B-A3B groupwise-int. Update your checkout to the current `master` and
+[rebuild NInfer](../README.md#quick-start), then run with Python 3.11:
+
+```bash
+python3 tools/upgrade_ninfer_v2_to_v3.py \
+  models/qwen3_8_27b_nvfp4.ninfer \
+  models/qwen3_8_27b_nvfp4.v3.ninfer
+```
+
+The output must use a new path. After upgrading, use it directly or rename it to replace the
+original file. Stored weight values and formats are preserved. The upgrade also installs the
+matching template from `tools/chat_templates/`. Published SHA-256 checksums apply only to
+downloaded files.
+
 ## Start with an official recipe
 
 For Qwen3.6-27B floating-point source weights:
@@ -18,6 +35,7 @@ python3 -m tools.convert \
   --model /path/to/Qwen3.6-27B \
   --recipe qwen3_6_27b \
   --components text,vision,mtp \
+  --resource chat_template.jinja=tools/chat_templates/qwen3_6.jinja \
   --proposal \
   --name qwen3.6-27b \
   --out models/qwen3_6_27b.ninfer
@@ -51,6 +69,7 @@ python3 -m tools.convert \
   --source quantized=/path/to/Qwen3.8-27B-NVFP4 \
   --source dflash2=/path/to/Qwen3.8-27B-DFlash2 \
   --components text,vision,mtp,dflash2 \
+  --resource chat_template.jinja=tools/chat_templates/qwen3_8.jinja \
   --proposal \
   --name qwen3.8-27b \
   --out models/qwen3_8_27b_nvfp4.ninfer
@@ -317,18 +336,24 @@ working set. `--rows-per-chunk` defaults to 512; custom methods own how they use
 ## Resources, files and inspection
 
 Text includes `tokenizer.json`, `tokenizer_config.json`, `chat_template.jinja` and
-`generation_config.json`. Vision adds its image and video processor configs. A resource override
-selects the final bytes before token-domain and processor checks:
+`generation_config.json`. Vision adds its image and video processor configs. Resources come from
+`--model`; `--resource ROLE=PATH` replaces a selected resource:
 
 ```text
 --resource chat_template.jinja=/path/to/chat_template.jinja
 ```
 
-Conversion does not require an official whole-file hash. The current Engine renderer supports its
-compiled Qwen templates and requires the standalone template to match the string in
-`tokenizer_config.json`. Storing a custom template therefore does not yet make arbitrary Jinja
-templates executable. `generation_config.json` is preserved; sampling presets remain determined by
-the architecture and explicit application/request settings.
+The official conversion examples select these maintained templates:
+
+| Model | Template | Defaults |
+|---|---|---|
+| Qwen3.6 Dense/MoE | [qwen3_6.jinja](../tools/chat_templates/qwen3_6.jinja) | thinking on; closed-turn reasoning omitted |
+| Qwen3.8 | [qwen3_8.jinja](../tools/chat_templates/qwen3_8.jinja) | thinking on; effort `xhigh`; closed-turn reasoning retained |
+
+Use your own Jinja file to change the artifact's default template. A startup
+[`--chat-template FILE`](cli.md#text-input) overrides the stored template.
+`generation_config.json` is preserved; sampling presets remain determined by the architecture
+and explicit application/request settings.
 
 The default maximum file size is 32,000,000,000 bytes, including framing. Smaller artifacts remain
 one file. Larger artifacts use an entry such as `models/my_qwen.ninfer` plus

@@ -1,187 +1,205 @@
-#include "jinja/string.h"
-#include "jinja/value.h"
-
+#include "string.h"
+#include "unicode.h"
 #include <algorithm>
-#include <functional>
-#include <optional>
-#include <sstream>
-#include <string>
-#include <vector>
+#include <stdexcept>
 
 namespace jinja {
 
-//
-// string_part
-//
-
-bool string_part::is_uppercase() const {
-    for (char c : val) {
-        if (std::islower(static_cast<unsigned char>(c))) { return false; }
+void string::tag(std::uint32_t origin, bool exact) {
+    std::size_t offset = 0;
+    for (auto& part : parts) {
+        part.origin        = origin;
+        part.source_offset = exact ? std::optional(offset) : std::nullopt;
+        offset += part.val.size();
     }
-    return true;
-}
-
-bool string_part::is_lowercase() const {
-    for (char c : val) {
-        if (std::isupper(static_cast<unsigned char>(c))) { return false; }
-    }
-    return true;
-}
-
-//
-// string
-//
-
-void string::mark_input() {
-    for (auto& part : parts) { part.is_input = true; }
 }
 
 std::string string::str() const {
-    if (parts.size() == 1) { return parts[0].val; }
-    std::ostringstream oss;
-    for (const auto& part : parts) { oss << part.val; }
-    return oss.str();
+    std::string result;
+    result.reserve(byte_size());
+    for (const auto& part : parts) result += part.val;
+    return result;
 }
 
-size_t string::length() const {
-    size_t len = 0;
-    for (const auto& part : parts) { len += part.val.length(); }
-    return len;
+std::size_t string::byte_size() const {
+    std::size_t result = 0;
+    for (const auto& part : parts) result += part.val.size();
+    return result;
 }
+
+std::size_t string::length() const { return unicode::length(str()); }
 
 void string::hash_update(hasher& hash) const noexcept {
-    for (const auto& part : parts) { hash.update(part.val.data(), part.val.length()); }
+    for (const auto& part : parts) hash.update(part.val.data(), part.val.size());
 }
 
-bool string::all_parts_are_input() const {
-    for (const auto& part : parts) {
-        if (!part.is_input) { return false; }
-    }
-    return true;
-}
+bool string::is_uppercase() const { return unicode::is_upper(str()); }
 
-bool string::is_uppercase() const {
-    for (const auto& part : parts) {
-        if (!part.is_uppercase()) { return false; }
-    }
-    return true;
-}
-
-bool string::is_lowercase() const {
-    for (const auto& part : parts) {
-        if (!part.is_lowercase()) { return false; }
-    }
-    return true;
-}
-
-// mark this string as input if other has ALL parts as input
-void string::mark_input_based_on(const string& other) {
-    if (other.all_parts_are_input()) {
-        for (auto& part : parts) { part.is_input = true; }
-    }
-}
+bool string::is_lowercase() const { return unicode::is_lower(str()); }
 
 string& string::append(const string& other) {
-    for (const auto& part : other.parts) { parts.push_back(part); }
+    if (this == &other) return append(string(other));
+    for (const auto& part : other.parts) {
+        if (!parts.empty()) {
+            auto& last = parts.back();
+            if ((!last.origin && !part.origin) ||
+                (last.origin == part.origin && last.source_offset && part.source_offset &&
+                 *last.source_offset + last.val.size() == *part.source_offset)) {
+                last.val += part.val;
+                continue;
+            }
+        }
+        parts.push_back(part);
+    }
     return *this;
 }
 
-// in-place transformation
-
-using transform_fn = std::function<std::string(const std::string&)>;
-
-static string apply_transform(string& self, const transform_fn& fn) {
-    for (auto& part : self.parts) { part.val = fn(part.val); }
-    return self;
+string string::cut_bytes(std::size_t begin, std::size_t end) const {
+    const auto size = byte_size();
+    if (begin > end || end > size) throw std::out_of_range("Jinja byte slice exceeds string");
+    if (begin == 0 && end == size) return *this;
+    string result;
+    std::size_t offset = 0;
+    for (const auto& part : parts) {
+        const auto next = offset + part.val.size();
+        if (begin < next && end > offset) {
+            const auto local_begin = std::max(begin, offset) - offset;
+            const auto local_end   = std::min(end, next) - offset;
+            string_part output{part.origin, part.val.substr(local_begin, local_end - local_begin),
+                               std::nullopt};
+            if (part.source_offset)
+                output.source_offset = *part.source_offset + local_begin;
+            else if (local_begin != 0 || local_end != part.val.size())
+                output.origin = 0;
+            result.parts.push_back(std::move(output));
+        }
+        offset = next;
+    }
+    return result;
 }
 
-string string::uppercase() {
-    return apply_transform(*this, [](const std::string& s) {
-        std::string res = s;
-        std::transform(res.begin(), res.end(), res.begin(), ::toupper);
-        return res;
-    });
+string string::slice(std::optional<std::int64_t> start, std::optional<std::int64_t> stop,
+                     std::int64_t step) const {
+    const auto text   = str();
+    const auto chars  = unicode::characters(text);
+    const auto bounds = unicode::slice_indices(chars.size(), start, stop, step);
+    if (step == 1) {
+        const auto begin = bounds.start == static_cast<std::int64_t>(chars.size())
+                               ? text.size()
+                               : chars[bounds.start].begin;
+        const auto end   = bounds.stop <= bounds.start ? begin
+                           : bounds.stop == static_cast<std::int64_t>(chars.size())
+                               ? text.size()
+                               : chars[bounds.stop].begin;
+        return cut_bytes(begin, end);
+    }
+    string result;
+    for (auto i = bounds.start; step > 0 ? i < bounds.stop : i > bounds.stop;) {
+        result.append(cut_bytes(chars[i].begin, chars[i].end));
+        if (step > 0 ? step >= bounds.stop - i : step <= bounds.stop - i) break;
+        i += step;
+    }
+    return result;
 }
 
-string string::lowercase() {
-    return apply_transform(*this, [](const std::string& s) {
-        std::string res = s;
-        std::transform(res.begin(), res.end(), res.begin(), ::tolower);
-        return res;
-    });
-}
-
-string string::capitalize() {
-    return apply_transform(*this, [](const std::string& s) {
-        if (s.empty()) return s;
-        std::string res = s;
-        res[0]          = ::toupper(static_cast<unsigned char>(res[0]));
-        std::transform(res.begin() + 1, res.end(), res.begin() + 1, ::tolower);
-        return res;
-    });
-}
-
-string string::titlecase() {
-    return apply_transform(*this, [](const std::string& s) {
-        std::string res      = s;
-        bool capitalize_next = true;
-        for (char& c : res) {
-            if (isspace(static_cast<unsigned char>(c))) {
-                capitalize_next = true;
-            } else if (capitalize_next) {
-                c               = ::toupper(static_cast<unsigned char>(c));
-                capitalize_next = false;
+std::vector<string> string::split(const std::optional<std::string>& separator, int64_t maxsplit,
+                                  bool reverse) const {
+    const auto text = str();
+    if (separator && separator->empty()) throw std::invalid_argument("empty separator");
+    std::vector<string> result;
+    size_t begin = 0, end = text.size();
+    const auto chars = separator ? std::vector<unicode::Character>{} : unicode::characters(text);
+    size_t first = 0, last = chars.size();
+    while (true) {
+        if (!separator) {
+            if (reverse) {
+                while (last > first && unicode::whitespace(chars[last - 1].value)) --last;
+                end = last ? chars[last - 1].end : 0;
             } else {
-                c = ::tolower(static_cast<unsigned char>(c));
+                while (first < last && unicode::whitespace(chars[first].value)) ++first;
+                begin = first < last ? chars[first].begin : text.size();
             }
+            if (first == last) break;
         }
-        return res;
-    });
+        if (maxsplit == 0) {
+            result.push_back(cut_bytes(begin, end));
+            break;
+        }
+        if (separator) {
+            size_t pos = std::string::npos;
+            if (end - begin >= separator->size()) {
+                pos = reverse ? text.rfind(*separator, end - separator->size())
+                              : text.find(*separator, begin);
+            }
+            if (pos == std::string::npos || pos < begin || pos + separator->size() > end) {
+                result.push_back(cut_bytes(begin, end));
+                break;
+            }
+            if (reverse) {
+                result.push_back(cut_bytes(pos + separator->size(), end));
+                end = pos;
+            } else {
+                result.push_back(cut_bytes(begin, pos));
+                begin = pos + separator->size();
+            }
+        } else if (reverse) {
+            size_t word = last;
+            while (word > first && !unicode::whitespace(chars[word - 1].value)) --word;
+            result.push_back(cut_bytes(chars[word].begin, end));
+            last = word;
+        } else {
+            size_t word = first;
+            while (word < last && !unicode::whitespace(chars[word].value)) ++word;
+            result.push_back(cut_bytes(begin, chars[word - 1].end));
+            first = word;
+        }
+        if (maxsplit > 0) --maxsplit;
+    }
+    if (reverse) std::reverse(result.begin(), result.end());
+    return result;
 }
 
-string string::strip(bool left, bool right, std::optional<const std::string_view> chars) {
-    static auto strip_part = [](const std::string& s, bool left, bool right,
-                                std::optional<const std::string_view> chars) -> std::string {
-        size_t start    = 0;
-        size_t end      = s.length();
-        auto match_char = [&chars](unsigned char c) -> bool {
-            return chars ? (*chars).find(c) != std::string::npos : isspace(c);
-        };
-        if (left) {
-            while (start < end && match_char(static_cast<unsigned char>(s[start]))) { ++start; }
-        }
-        if (right) {
-            while (end > start && match_char(static_cast<unsigned char>(s[end - 1]))) { --end; }
-        }
-        return s.substr(start, end - start);
+string string::transformed(std::string text) const {
+    if (text == str()) return *this;
+    string result(text);
+    if (parts.size() == 1 && parts.front().origin) result.tag(parts.front().origin, false);
+    return result;
+}
+
+string string::uppercase() const {
+    return transformed(unicode::map_case(str(), unicode::Case::Upper));
+}
+
+string string::lowercase() const {
+    return transformed(unicode::map_case(str(), unicode::Case::Lower));
+}
+
+string string::capitalize() const {
+    return transformed(unicode::map_case(str(), unicode::Case::Capitalize));
+}
+
+string string::titlecase() const {
+    return transformed(unicode::map_case(str(), unicode::Case::Title));
+}
+
+string string::strip(bool left, bool right, std::optional<const std::string_view> selected) const {
+    const auto text  = str();
+    const auto chars = unicode::characters(text);
+    const auto matching =
+        selected ? unicode::characters(*selected) : std::vector<unicode::Character>{};
+    const auto match = [&](auto cp) {
+        return selected ? std::any_of(matching.begin(), matching.end(),
+                                      [&](auto ch) { return ch.value == cp; })
+                        : unicode::whitespace(cp);
     };
-    if (parts.empty()) { return *this; }
-    if (left) {
-        for (size_t i = 0; i < parts.size(); ++i) {
-            parts[i].val = strip_part(parts[i].val, true, false, chars);
-            if (parts[i].val.empty()) {
-                // remove empty part
-                parts.erase(parts.begin() + i);
-                --i;
-                continue;
-            } else {
-                break;
-            }
-        }
-    }
-    if (right) {
-        for (size_t i = parts.size(); i-- > 0;) {
-            parts[i].val = strip_part(parts[i].val, false, true, chars);
-            if (parts[i].val.empty()) {
-                // remove empty part
-                parts.erase(parts.begin() + i);
-                continue;
-            } else {
-                break;
-            }
-        }
-    }
-    return *this;
+    std::size_t begin = 0, end = chars.size();
+    if (left)
+        while (begin < end && match(chars[begin].value)) ++begin;
+    if (right)
+        while (end > begin && match(chars[end - 1].value)) --end;
+    const auto first_byte = begin == chars.size() ? text.size() : chars[begin].begin;
+    const auto last_byte  = end == chars.size() ? text.size() : chars[end].begin;
+    return cut_bytes(first_byte, last_byte);
 }
 
 } // namespace jinja

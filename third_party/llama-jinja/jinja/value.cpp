@@ -9,8 +9,6 @@
 #include <optional>
 #include <algorithm>
 
-#define FILENAME "jinja-value"
-
 namespace jinja {
 
 // func_args method implementations
@@ -52,48 +50,44 @@ void func_args::push_front(const value& val) { args.insert(args.begin(), val); }
 
 const std::vector<value>& func_args::get_args() const { return args; }
 
-/**
- * Function that mimics Python's array slicing.
- */
-template <typename T>
-static T slice(const T& array, int64_t start, int64_t stop, int64_t step = 1) {
-    int64_t len       = static_cast<int64_t>(array.size());
-    int64_t direction = (step > 0) ? 1 : ((step < 0) ? -1 : 0);
-    int64_t start_val = 0;
-    int64_t stop_val  = 0;
-    if (direction >= 0) {
-        start_val = start;
-        if (start_val < 0) {
-            start_val = std::max(len + start_val, (int64_t)0);
-        } else {
-            start_val = std::min(start_val, len);
-        }
+static std::optional<int64_t> slice_bound(const value& val) {
+    if (val->is_undefined() || val->is_none()) return std::nullopt;
+    return val->as_int();
+}
 
-        stop_val = stop;
-        if (stop_val < 0) {
-            stop_val = std::max(len + stop_val, (int64_t)0);
-        } else {
-            stop_val = std::min(stop_val, len);
-        }
-    } else {
-        start_val = start;
-        if (start_val < 0) {
-            start_val = std::max(len + start_val, (int64_t)0);
-        } else {
-            start_val = std::min(start_val, len - 1);
-        }
-
-        stop_val = stop;
-        if (stop_val < -1) {
-            stop_val = std::max(len + stop_val, (int64_t)-1);
-        } else {
-            stop_val = std::min(stop_val, len - 1);
-        }
+static value slice_value(const func_args& args) {
+    args.ensure_count(4, 4);
+    const auto input = args.get_pos(0);
+    const auto start = slice_bound(args.get_pos(1));
+    const auto stop  = slice_bound(args.get_pos(2));
+    const auto step  = slice_bound(args.get_pos(3)).value_or(1);
+    if (is_val<value_string>(input)) {
+        return mk_val<value_string>(input->as_string().slice(start, stop, step));
     }
-    T result;
-    if (direction == 0) { return result; }
-    for (int64_t i = start_val; direction * i < direction * stop_val; i += step) {
-        if (i >= 0 && i < len) { result.push_back(array[static_cast<size_t>(i)]); }
+    const auto& array = input->as_array();
+    const auto bounds = unicode::slice_indices(array.size(), start, stop, step);
+    auto result       = mk_val<value_array>();
+    for (int64_t i = bounds.start; step > 0 ? i < bounds.stop : i > bounds.stop;) {
+        if (args.ctx.checkpoint) args.ctx.checkpoint();
+        result->push_back(array[static_cast<size_t>(i)]);
+        if ((step > 0 && i > INT64_MAX - step) || (step < 0 && i < INT64_MIN - step)) break;
+        i += step;
+    }
+    return result;
+}
+
+static value split_string(const func_args& args, bool reverse) {
+    args.ensure_count(1, 3);
+    const auto separator = args.get_kwarg_or_pos("sep", 1);
+    const auto count     = args.get_kwarg_or_pos("maxsplit", 2);
+    const auto source    = args.get_pos(0)->as_string();
+    std::optional<std::string> delimiter;
+    if (!separator->is_undefined() && !separator->is_none())
+        delimiter = separator->as_string().str();
+    auto result = mk_val<value_array>();
+    for (const auto& part :
+         source.split(delimiter, count->is_undefined() ? -1 : count->as_int(), reverse)) {
+        result->push_back(mk_val<value_string>(part));
     }
     return result;
 }
@@ -115,7 +109,6 @@ template <typename T>
 static value test_type_fn(const func_args& args) {
     args.ensure_count(1);
     bool is_type = is_val<T>(args.get_pos(0));
-    JJ_DEBUG("test_type_fn: type=%s result=%d", typeid(T).name(), is_type ? 1 : 0);
     return mk_val<value_bool>(is_type);
 }
 
@@ -123,8 +116,6 @@ template <typename T, typename U>
 static value test_type_fn(const func_args& args) {
     args.ensure_count(1);
     bool is_type = is_val<T>(args.get_pos(0)) || is_val<U>(args.get_pos(0));
-    JJ_DEBUG("test_type_fn: type=%s or %s result=%d", typeid(T).name(), typeid(U).name(),
-             is_type ? 1 : 0);
     return mk_val<value_bool>(is_type);
 }
 
@@ -133,8 +124,6 @@ static value test_type_fn(const func_args& args) {
     args.ensure_count(1);
     bool is_type =
         is_val<T>(args.get_pos(0)) || is_val<U>(args.get_pos(0)) || is_val<V>(args.get_pos(0));
-    JJ_DEBUG("test_type_fn: type=%s, %s or %s result=%d", typeid(T).name(), typeid(U).name(),
-             typeid(V).name(), is_type ? 1 : 0);
     return mk_val<value_bool>(is_type);
 }
 
@@ -144,81 +133,6 @@ static value test_compare_fn(const func_args& args) {
     return mk_val<value_bool>(value_compare(args.get_pos(0), args.get_pos(1), op));
 }
 
-static void append_codepoint_as_ascii_json_escape(std::string& out, uint32_t codepoint) {
-    auto append_u16 = [&out](uint32_t value) {
-        char buf[8];
-        snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(value));
-        out += buf;
-    };
-
-    if (codepoint <= 0xFFFF) {
-        append_u16(codepoint);
-        return;
-    }
-
-    codepoint -= 0x10000;
-    append_u16(0xD800 + ((codepoint >> 10) & 0x3FF));
-    append_u16(0xDC00 + (codepoint & 0x3FF));
-}
-
-static std::string json_ensure_ascii_preserving_format(const std::string& json_str) {
-    std::string output;
-    output.reserve(json_str.size());
-
-    bool in_string = false;
-    bool escaped   = false;
-
-    for (size_t pos = 0; pos < json_str.size();) {
-        const char ch = json_str[pos];
-        if (!in_string) {
-            output.push_back(ch);
-            if (ch == '"') { in_string = true; }
-            ++pos;
-            continue;
-        }
-
-        if (escaped) {
-            output.push_back(ch);
-            escaped = false;
-            ++pos;
-            continue;
-        }
-
-        if (ch == '\\') {
-            output.push_back(ch);
-            escaped = true;
-            ++pos;
-            continue;
-        }
-
-        if (ch == '"') {
-            output.push_back(ch);
-            in_string = false;
-            ++pos;
-            continue;
-        }
-
-        const unsigned char uch = static_cast<unsigned char>(ch);
-        if (uch < 0x80) {
-            output.push_back(ch);
-            ++pos;
-            continue;
-        }
-
-        auto parsed = common_parse_utf8_codepoint(json_str, pos);
-        if (parsed.status != utf8_parse_result::SUCCESS) {
-            output += "\\ufffd";
-            ++pos;
-            continue;
-        }
-
-        append_codepoint_as_ascii_json_escape(output, parsed.codepoint);
-        pos += parsed.bytes_consumed;
-    }
-
-    return output;
-}
-
 static value tojson(const func_args& args) {
     args.ensure_count(1, 5);
     value val_ascii      = args.get_kwarg_or_pos("ensure_ascii", 1);
@@ -226,24 +140,22 @@ static value tojson(const func_args& args) {
     value val_separators = args.get_kwarg_or_pos("separators", 3);
     value val_sort       = args.get_kwarg_or_pos("sort_keys", 4);
     int indent           = -1;
-    if (args.ctx.is_get_stats) {
-        // mark as used (recursively) for stats
-        auto val_input = args.get_pos(0);
-        value_t::stats_t::mark_used(const_cast<value&>(val_input), true);
-    }
+
     if (is_val<value_int>(val_indent)) { indent = static_cast<int>(val_indent->as_int()); }
-    if (val_sort->as_bool()) { // undefined == false
-        throw not_implemented_exception("tojson sort_keys=true not implemented");
-    }
     const bool ensure_ascii = val_ascii->as_bool(); // undefined == false
     auto separators =
         (is_val<value_array>(val_separators) ? val_separators : mk_val<value_array>())->as_array();
     std::string item_sep =
         separators.size() > 0 ? separators[0]->as_string().str() : (indent < 0 ? ", " : ",");
     std::string key_sep  = separators.size() > 1 ? separators[1]->as_string().str() : ": ";
-    std::string json_str = value_to_json(args.get_pos(0), indent, item_sep, key_sep);
-    if (ensure_ascii) { json_str = json_ensure_ascii_preserving_format(json_str); }
-    return mk_val<value_string>(json_str);
+    std::string json_str = value_to_json(args.get_pos(0), indent, item_sep, key_sep, ensure_ascii,
+                                         val_sort->as_bool());
+    auto result          = mk_val<value_string>(json_str);
+    if (args.get_pos(0)->origin)
+        result->val_str.tag(args.get_pos(0)->origin, false);
+    else if (is_val<value_string>(args.get_pos(0)))
+        result->val_str = args.get_pos(0)->val_str.transformed(json_str);
+    return result;
 }
 
 template <bool is_reject>
@@ -325,12 +237,11 @@ static value selectattr(const func_args& args) {
 }
 
 static value default_value(const func_args& args) {
-    args.ensure_count(2, 3);
-    value val_check = args.get_kwarg_or_pos("boolean", 2);
-    bool check_bool = val_check->as_bool(); // undefined == false
-    bool no_value   = check_bool ? (!args.get_pos(0)->as_bool())
-                                 : (args.get_pos(0)->is_undefined() || args.get_pos(0)->is_none());
-    return no_value ? args.get_pos(1) : args.get_pos(0);
+    args.ensure_count(1, 3);
+    const auto input       = args.get_pos(0);
+    const bool use_default = input->is_undefined() ||
+                             (args.get_kwarg_or_pos("boolean", 2)->as_bool() && !input->as_bool());
+    return use_default ? args.get_pos(1, mk_val<value_string>("")) : input;
 }
 
 const func_builtins& global_builtins() {
@@ -349,7 +260,6 @@ const func_builtins& global_builtins() {
                      throw raised_exception("namespace() arguments must be kwargs");
                  }
                  auto kwarg = cast_val<value_kwarg>(arg);
-                 JJ_DEBUG("namespace: adding key '%s'", kwarg->key.c_str());
                  out->insert(kwarg->key, kwarg->val);
              }
              return out;
@@ -358,15 +268,21 @@ const func_builtins& global_builtins() {
          [](const func_args& args) -> value {
              args.ensure_vals<value_string>();
              std::string format = args.get_pos(0)->as_string().str();
-             // get current time
-             // TODO: make sure this is the same behavior as Python's strftime
-             char buf[100];
-             if (std::strftime(buf, sizeof(buf), format.c_str(),
-                               std::localtime(&args.ctx.current_time))) {
-                 return mk_val<value_string>(std::string(buf));
-             } else {
-                 throw raised_exception("strftime_now: failed to format time");
+             std::tm local{};
+             if (!localtime_r(&args.ctx.current_time, &local)) {
+                 throw raised_exception("strftime_now: invalid time");
              }
+             if (format.empty()) return mk_val<value_string>("");
+             for (size_t capacity = 128; capacity <= 65536; capacity *= 2) {
+                 std::string buffer(capacity, '\0');
+                 const auto size =
+                     std::strftime(buffer.data(), buffer.size(), format.c_str(), &local);
+                 if (size) {
+                     buffer.resize(size);
+                     return mk_val<value_string>(buffer);
+                 }
+             }
+             throw raised_exception("strftime_now: failed to format time");
          }},
         {"range",
          [](const func_args& args) -> value {
@@ -394,14 +310,12 @@ const func_builtins& global_builtins() {
 
              auto out = mk_val<value_array>();
              if (step == 0) { throw raised_exception("range() step argument must not be zero"); }
-             if (step > 0) {
-                 for (int64_t i = start; i < stop; i += step) {
-                     out->push_back(mk_val<value_int>(i));
-                 }
-             } else {
-                 for (int64_t i = start; i > stop; i += step) {
-                     out->push_back(mk_val<value_int>(i));
-                 }
+             for (int64_t i = start; step > 0 ? i < stop : i > stop;) {
+                 if (args.ctx.checkpoint) args.ctx.checkpoint();
+                 out->push_back(mk_val<value_int>(i));
+                 if ((step > 0 && i > INT64_MAX - step) || (step < 0 && i < INT64_MIN - step))
+                     break;
+                 i += step;
              }
              return out;
          }},
@@ -462,7 +376,6 @@ const func_builtins& global_builtins() {
          [](const func_args& args) -> value {
              args.ensure_count(1);
              bool res = !args.get_pos(0)->is_undefined();
-             JJ_DEBUG("test_is_defined: result=%d", res ? 1 : 0);
              return mk_val<value_bool>(res);
          }},
         {"test_is_undefined", test_type_fn<value_undefined>},
@@ -681,94 +594,42 @@ const func_builtins& value_string_t::get_builtins() const {
              std::string suffix = args.get_pos(1)->as_string().str();
              return mk_val<value_bool>(string_endswith(str, suffix));
          }},
-        {"split",
-         [](const func_args& args) -> value {
-             args.ensure_count(1, 3);
-             value val_input = args.get_pos(0);
-             if (!is_val<value_string>(val_input)) {
-                 throw raised_exception("split() first argument must be a string");
-             }
-             std::string str = val_input->as_string().str();
-             // FIXME: Support non-specified delimiter (split on consecutive (no leading or
-             // trailing) whitespace)
-             std::string delim = (args.count() > 1) ? args.get_pos(1)->as_string().str() : " ";
-             if (delim.empty()) { throw raised_exception("empty separator"); }
-             int64_t maxsplit = (args.count() > 2) ? args.get_pos(2)->as_int() : -1;
-             auto result      = mk_val<value_array>();
-             size_t pos       = 0;
-             std::string token;
-             while ((pos = str.find(delim)) != std::string::npos && maxsplit != 0) {
-                 token = str.substr(0, pos);
-                 result->push_back(mk_val<value_string>(token));
-                 str.erase(0, pos + delim.length());
-                 --maxsplit;
-             }
-             auto res = mk_val<value_string>(str);
-             res->val_str.mark_input_based_on(args.get_pos(0)->val_str);
-             result->push_back(std::move(res));
-             return result;
-         }},
-        {"rsplit",
-         [](const func_args& args) -> value {
-             args.ensure_count(1, 3);
-             value val_input = args.get_pos(0);
-             if (!is_val<value_string>(val_input)) {
-                 throw raised_exception("rsplit() first argument must be a string");
-             }
-             std::string str = val_input->as_string().str();
-             // FIXME: Support non-specified delimiter (split on consecutive (no leading or
-             // trailing) whitespace)
-             std::string delim = (args.count() > 1) ? args.get_pos(1)->as_string().str() : " ";
-             if (delim.empty()) { throw raised_exception("empty separator"); }
-             int64_t maxsplit = (args.count() > 2) ? args.get_pos(2)->as_int() : -1;
-             auto result      = mk_val<value_array>();
-             size_t pos       = 0;
-             std::string token;
-             while ((pos = str.rfind(delim)) != std::string::npos && maxsplit != 0) {
-                 token = str.substr(pos + delim.length());
-                 result->push_back(mk_val<value_string>(token));
-                 str.erase(pos);
-                 --maxsplit;
-             }
-             auto res = mk_val<value_string>(str);
-             res->val_str.mark_input_based_on(args.get_pos(0)->val_str);
-             result->push_back(std::move(res));
-             result->reverse();
-             return result;
-         }},
+        {"split", [](const func_args& args) { return split_string(args, false); }},
+        {"rsplit", [](const func_args& args) { return split_string(args, true); }},
         {"replace",
          [](const func_args& args) -> value {
-             args.ensure_vals<value_string, value_string, value_string, value_int>(true, true, true,
-                                                                                   false);
-             std::string str     = args.get_pos(0)->as_string().str();
-             std::string old_str = args.get_pos(1)->as_string().str();
-             std::string new_str = args.get_pos(2)->as_string().str();
-             int64_t count       = args.count() > 3 ? args.get_pos(3)->as_int() : -1;
-             if (count > 0) {
-                 throw not_implemented_exception(
-                     "String replace with count argument not implemented");
-             }
-             if (old_str != new_str) {
-                 size_t pos = 0;
-                 if (old_str.empty()) {
-                     std::string new_res;
-                     new_res.reserve(str.length() + new_str.length() * (str.length() + 1));
-                     new_res += new_str;
-                     for (const char c : str) {
-                         new_res.push_back(c);
-                         new_res += new_str;
-                     }
-                     str = new_res;
-                 } else {
-                     while ((pos = str.find(old_str, pos)) != std::string::npos) {
-                         str.replace(pos, old_str.length(), new_str);
-                         pos += new_str.length();
-                     }
+             args.ensure_count(3, 4);
+             const auto source  = args.get_pos(0)->as_string();
+             const auto old_str = args.get_pos(1)->as_string().str();
+             const auto new_str = args.get_pos(2)->as_string();
+             const auto limit   = args.get_kwarg_or_pos("count", 3);
+             int64_t remaining  = limit->is_undefined() || limit->is_none() ? -1 : limit->as_int();
+             if (!remaining) return mk_val<value_string>(source);
+             const auto text = source.str();
+             string result;
+             size_t cursor = 0;
+             if (old_str.empty()) {
+                 result.append(new_str);
+                 if (remaining > 0) --remaining;
+                 for (const auto& ch : unicode::characters(text)) {
+                     result.append(source.cut_bytes(ch.begin, ch.end));
+                     cursor = ch.end;
+                     if (remaining == 0) break;
+                     result.append(new_str);
+                     if (remaining > 0) --remaining;
+                 }
+             } else {
+                 while (remaining != 0) {
+                     if (args.ctx.checkpoint) args.ctx.checkpoint();
+                     const auto pos = text.find(old_str, cursor);
+                     if (pos == std::string::npos) break;
+                     result.append(source.cut_bytes(cursor, pos)).append(new_str);
+                     cursor = pos + old_str.size();
+                     if (remaining > 0) --remaining;
                  }
              }
-             auto res = mk_val<value_string>(str);
-             res->val_str.mark_input_based_on(args.get_pos(0)->val_str);
-             return res;
+             result.append(source.cut_bytes(cursor, text.size()));
+             return mk_val<value_string>(result);
          }},
         {"format",
          [](const func_args& args) -> value {
@@ -777,14 +638,13 @@ const func_builtins& value_string_t::get_builtins() const {
                  throw raised_exception("format() first argument must be a string");
              }
              const jinja::string& fmt = val_input->as_string();
-             const bool fmt_is_input  = fmt.all_parts_are_input();
 
              const std::string str = fmt.str();
              jinja::string result;
              std::string literal;
              auto flush_literal = [&]() {
                  if (!literal.empty()) {
-                     result.parts.push_back({fmt_is_input, literal});
+                     result.append(string(literal));
                      literal.clear();
                  }
              };
@@ -847,54 +707,8 @@ const func_builtins& value_string_t::get_builtins() const {
              args.ensure_vals<value_string>();
              return mk_val<value_string>(args.get_pos(0)->as_string());
          }},
-        {"default",
-         [](const func_args& args) -> value {
-             value input = args.get_pos(0);
-             if (!is_val<value_string>(input)) {
-                 throw raised_exception("default() first argument must be a string");
-             }
-             value default_val = mk_val<value_string>("");
-             if (args.count() > 1 && !args.get_pos(1)->is_undefined()) {
-                 default_val = args.get_pos(1);
-             }
-             value boolean_val = args.get_kwarg_or_pos("boolean", 2); // undefined == false
-             if (input->is_undefined() || (boolean_val->as_bool() && !input->as_bool())) {
-                 return default_val;
-             } else {
-                 return input;
-             }
-         }},
-        {"slice",
-         [](const func_args& args) -> value {
-             args.ensure_count(1, 4);
-             args.ensure_vals<value_string, value_int, value_int, value_int>(true, true, false,
-                                                                             false);
-
-             auto arg0 = args.get_pos(1);
-             auto arg1 = args.get_pos(2, mk_val<value_undefined>());
-             auto arg2 = args.get_pos(3, mk_val<value_undefined>());
-
-             int64_t start, stop, step;
-             if (args.count() == 1) {
-                 start = 0;
-                 stop  = arg0->as_int();
-                 step  = 1;
-             } else if (args.count() == 2) {
-                 start = arg0->as_int();
-                 stop  = arg1->as_int();
-                 step  = 1;
-             } else {
-                 start = arg0->as_int();
-                 stop  = arg1->as_int();
-                 step  = arg2->as_int();
-             }
-             if (step == 0) { throw raised_exception("slice step cannot be zero"); }
-             auto input  = args.get_pos(0);
-             auto sliced = slice(input->as_string().str(), start, stop, step);
-             auto res    = mk_val<value_string>(sliced);
-             res->val_str.mark_input_based_on(input->as_string());
-             return res;
-         }},
+        {"default", default_value},
+        {"slice", slice_value},
         {"safe",
          [](const func_args& args) -> value {
              // no-op for now
@@ -934,8 +748,8 @@ const func_builtins& value_string_t::get_builtins() const {
                  if (blank) { indented += indent; }
              }
 
-             auto res = mk_val<value_string>(indented);
-             res->val_str.mark_input_based_on(val_input->as_string());
+             auto res     = mk_val<value_string>(indented);
+             res->val_str = val_input->as_string().transformed(indented);
              return res;
          }},
         {"join", string_join_not_implemented},
@@ -1005,36 +819,7 @@ const func_builtins& value_array_t::get_builtins() const {
              const auto& arr = args.get_pos(0)->as_array();
              return mk_val<value_int>(static_cast<int64_t>(arr.size()));
          }},
-        {"slice",
-         [](const func_args& args) -> value {
-             args.ensure_count(1, 4);
-             args.ensure_vals<value_array, value_int, value_int, value_int>(true, true, false,
-                                                                            false);
-
-             auto val  = args.get_pos(0);
-             auto arg0 = args.get_pos(1);
-             auto arg1 = args.get_pos(2, mk_val<value_undefined>());
-             auto arg2 = args.get_pos(3, mk_val<value_undefined>());
-
-             int64_t start, stop, step;
-             if (args.count() == 1) {
-                 start = 0;
-                 stop  = arg0->as_int();
-                 step  = 1;
-             } else if (args.count() == 2) {
-                 start = arg0->as_int();
-                 stop  = arg1->as_int();
-                 step  = 1;
-             } else {
-                 start = arg0->as_int();
-                 stop  = arg1->as_int();
-                 step  = arg2->as_int();
-             }
-             if (step == 0) { throw raised_exception("slice step cannot be zero"); }
-             auto arr = slice(val->as_array(), start, stop, step);
-             return is_val<value_tuple>(val) ? mk_val<value_tuple>(std::move(arr))
-                                             : mk_val<value_array>(std::move(arr));
-         }},
+        {"slice", slice_value},
         {"selectattr", selectattr<false>},
         {"select", selectattr<false>},
         {"rejectattr", selectattr<true>},
@@ -1077,11 +862,7 @@ const func_builtins& value_array_t::get_builtins() const {
         {"string",
          [](const func_args& args) -> value {
              args.ensure_vals<value_array>();
-             if (args.ctx.is_get_stats) {
-                 // mark as used (recursively) for stats
-                 auto val_input = args.get_pos(0);
-                 value_t::stats_t::mark_used(const_cast<value&>(val_input), true);
-             }
+
              return mk_val<value_string>(args.get_pos(0)->as_string());
          }},
         {"tojson", tojson},
@@ -1289,11 +1070,7 @@ const func_builtins& value_object_t::get_builtins() const {
         {"string",
          [](const func_args& args) -> value {
              args.ensure_vals<value_object>();
-             if (args.ctx.is_get_stats) {
-                 // mark as used (recursively) for stats
-                 auto val_input = args.get_pos(0);
-                 value_t::stats_t::mark_used(const_cast<value&>(val_input), true);
-             }
+
              return mk_val<value_string>(args.get_pos(0)->as_string());
          }},
         {"length",
@@ -1398,165 +1175,17 @@ const func_builtins& value_undefined_t::get_builtins() const {
 
 
 bool value_compare(const value& a, const value& b, value_compare_op op) {
-    auto cmp = [&]() {
-        // compare numeric types
-        if ((is_val<value_int>(a) || is_val<value_float>(a)) &&
-            (is_val<value_int>(b) || is_val<value_float>(b))) {
-            try {
-                if (op == value_compare_op::eq) {
-                    return a->as_float() == b->as_float();
-                } else if (op == value_compare_op::ge) {
-                    return a->as_float() >= b->as_float();
-                } else if (op == value_compare_op::gt) {
-                    return a->as_float() > b->as_float();
-                } else if (op == value_compare_op::lt) {
-                    return a->as_float() < b->as_float();
-                } else if (op == value_compare_op::ne) {
-                    return a->as_float() != b->as_float();
-                } else {
-                    throw std::runtime_error("Unsupported comparison operator for numeric types");
-                }
-            } catch (...) {}
-        }
-        // compare string and number
-        // TODO: not sure if this is the right behavior
-        if ((is_val<value_string>(b) && (is_val<value_int>(a) || is_val<value_float>(a))) ||
-            (is_val<value_string>(a) && (is_val<value_int>(b) || is_val<value_float>(b))) ||
-            (is_val<value_string>(a) && is_val<value_string>(b))) {
-            try {
-                if (op == value_compare_op::eq) {
-                    return a->as_string().str() == b->as_string().str();
-                } else if (op == value_compare_op::ge) {
-                    return a->as_string().str() >= b->as_string().str();
-                } else if (op == value_compare_op::gt) {
-                    return a->as_string().str() > b->as_string().str();
-                } else if (op == value_compare_op::lt) {
-                    return a->as_string().str() < b->as_string().str();
-                } else if (op == value_compare_op::ne) {
-                    return a->as_string().str() != b->as_string().str();
-                } else {
-                    throw std::runtime_error(
-                        "Unsupported comparison operator for string/number types");
-                }
-            } catch (...) {}
-        }
-        // compare boolean simple
-        if (is_val<value_bool>(a) && is_val<value_bool>(b)) {
-            if (op == value_compare_op::eq) {
-                return a->as_bool() == b->as_bool();
-            } else if (op == value_compare_op::ne) {
-                return a->as_bool() != b->as_bool();
-            } else {
-                throw std::runtime_error("Unsupported comparison operator for bool type");
-            }
-        }
-        // compare by type
-        if (a->type() != b->type()) { return false; }
-        return false;
+    if (op == eq) return *a == *b;
+    if (op == ne) return !(*a == *b);
+    auto compare = [op](const auto& lhs, const auto& rhs) {
+        if (op == ge) return lhs >= rhs;
+        if (op == gt) return lhs > rhs;
+        return lhs < rhs;
     };
-    auto result = cmp();
-    JJ_DEBUG("Comparing types: %s and %s result=%d", a->type().c_str(), b->type().c_str(), result);
-    return result;
-}
-
-// recursively convert value to JSON string
-// TODO: avoid circular references
-static void value_to_json_internal(std::ostringstream& oss, const value& val, int curr_lvl,
-                                   int indent, const std::string_view item_sep,
-                                   const std::string_view key_sep) {
-    auto indent_str = [indent, curr_lvl]() -> std::string {
-        return (indent > 0) ? std::string(curr_lvl * indent, ' ') : "";
-    };
-    auto newline = [indent]() -> std::string { return (indent >= 0) ? "\n" : ""; };
-
-    if (is_val<value_none>(val) || val->is_undefined()) {
-        oss << "null";
-    } else if (is_val<value_bool>(val)) {
-        oss << (val->as_bool() ? "true" : "false");
-    } else if (is_val<value_int>(val)) {
-        oss << val->as_int();
-    } else if (is_val<value_float>(val)) {
-        oss << val->as_float();
-    } else if (is_val<value_string>(val)) {
-        oss << "\"";
-        for (char c : val->as_string().str()) {
-            switch (c) {
-            case '"':
-                oss << "\\\"";
-                break;
-            case '\\':
-                oss << "\\\\";
-                break;
-            case '\b':
-                oss << "\\b";
-                break;
-            case '\f':
-                oss << "\\f";
-                break;
-            case '\n':
-                oss << "\\n";
-                break;
-            case '\r':
-                oss << "\\r";
-                break;
-            case '\t':
-                oss << "\\t";
-                break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[7];
-                    snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    oss << buf;
-                } else {
-                    oss << c;
-                }
-            }
-        }
-        oss << "\"";
-    } else if (is_val<value_array>(val)) {
-        const auto& arr = val->as_array();
-        oss << "[";
-        if (!arr.empty()) {
-            oss << newline();
-            for (size_t i = 0; i < arr.size(); ++i) {
-                oss << indent_str() << (indent > 0 ? std::string(indent, ' ') : "");
-                value_to_json_internal(oss, arr[i], curr_lvl + 1, indent, item_sep, key_sep);
-                if (i < arr.size() - 1) { oss << item_sep; }
-                oss << newline();
-            }
-            oss << indent_str();
-        }
-        oss << "]";
-    } else if (is_val<value_object>(val)) {
-        const auto& obj = val->as_ordered_object(); // IMPORTANT: need to keep exact order
-        oss << "{";
-        if (!obj.empty()) {
-            oss << newline();
-            size_t i = 0;
-            for (const auto& pair : obj) {
-                oss << indent_str() << (indent > 0 ? std::string(indent, ' ') : "");
-                value_to_json_internal(oss, mk_val<value_string>(pair.first->as_string().str()),
-                                       curr_lvl + 1, indent, item_sep, key_sep);
-                oss << key_sep;
-                value_to_json_internal(oss, pair.second, curr_lvl + 1, indent, item_sep, key_sep);
-                if (i < obj.size() - 1) { oss << item_sep; }
-                oss << newline();
-                ++i;
-            }
-            oss << indent_str();
-        }
-        oss << "}";
-    } else {
-        oss << "null";
-    }
-}
-
-std::string value_to_json(const value& val, int indent, const std::string_view item_sep,
-                          const std::string_view key_sep) {
-    std::ostringstream oss;
-    value_to_json_internal(oss, val, 0, indent, item_sep, key_sep);
-    JJ_DEBUG("value_to_json: result=%s", oss.str().c_str());
-    return oss.str();
+    if (a->is_numeric() && b->is_numeric()) return compare(a->val_flt, b->val_flt);
+    if (is_val<value_string>(a) && is_val<value_string>(b))
+        return compare(a->as_string().str(), b->as_string().str());
+    throw raised_exception("Cannot order " + a->type() + " and " + b->type());
 }
 
 // TODO: avoid circular references
@@ -1571,21 +1200,6 @@ std::string value_to_string_repr(const value& val) {
         }
     } else {
         return val->as_repr();
-    }
-}
-
-// stats utility
-void value_t::stats_t::mark_used(value& val, bool deep) {
-    val->stats.used = true;
-    if (deep) {
-        if (is_val<value_array>(val)) {
-            for (auto& item : val->val_arr) { mark_used(item, deep); }
-        } else if (is_val<value_object>(val)) {
-            for (auto& pair : val->val_obj) {
-                mark_used(pair.first, deep);
-                mark_used(pair.second, deep);
-            }
-        }
     }
 }
 

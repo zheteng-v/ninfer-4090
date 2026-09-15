@@ -104,6 +104,13 @@ ninfer_add_test(ninfer_sampling_defaults_test
   SOURCES test_sampling_defaults.cpp
   LIBRARIES ninfer_engine ninfer_core)
 
+ninfer_add_test(ninfer_jinja_test
+  SOURCES text/test_jinja.cpp
+  LIBRARIES ninfer_jinja ninfer::json)
+add_test(NAME ninfer_chat_templates_test
+  COMMAND ${Python3_EXECUTABLE} -B ${PROJECT_SOURCE_DIR}/tests/text/test_chat_templates.py
+          $<TARGET_FILE:ninfer_jinja_test>)
+
 ninfer_add_test(ninfer_perplexity_evaluation_test
   SOURCES test_perplexity_evaluation.cpp
           ${PROJECT_SOURCE_DIR}/apps/perplexity/evaluation.cpp)

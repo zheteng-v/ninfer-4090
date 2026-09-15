@@ -10,13 +10,6 @@
 #include <string>
 #include <vector>
 
-#define JJ_DEBUG(msg, ...)                                                                         \
-    do {                                                                                           \
-        if (g_jinja_debug) printf("%s:%-3d : " msg "\n", FILENAME, __LINE__, __VA_ARGS__);         \
-    } while (0)
-
-extern bool g_jinja_debug;
-
 namespace jinja {
 
 struct statement;
@@ -52,8 +45,6 @@ const T* cast_stmt(const statement_ptr& ptr) {
 // End Helpers
 
 
-// not thread-safe
-void enable_debug(bool enable);
 
 // for visiting AST nodes
 // function signature: void(bool is_leaf, statement * node, pair of <label, children>)
@@ -65,7 +56,7 @@ struct context {
         src;                  // for debugging; use shared_ptr to avoid copying on scope creation
     std::time_t current_time; // for functions that need current time
 
-    bool is_get_stats = false; // whether to collect stats
+    std::function<void()> checkpoint;
 
     visitor_fn visitor;
 
@@ -84,13 +75,33 @@ struct context {
 
     ~context() = default;
 
+    // Keep macro definition scopes alive for this render. Callables refer back weakly,
+    // so an environment containing its own macro does not form an ownership cycle.
+    std::weak_ptr<value_object_t> capture_scope() {
+        captured_scopes->push_back(env);
+        return env;
+    }
+
+    std::weak_ptr<value_object_t> current_scope() const { return env; }
+
+    context(const context& caller, const std::weak_ptr<value_object_t>& lexical_scope) : context() {
+        const auto scope = lexical_scope.lock();
+        if (!scope) throw std::runtime_error("macro definition scope has expired");
+        for (const auto& pair : scope->as_ordered_object()) set_val(pair.first, pair.second);
+        current_time    = caller.current_time;
+        checkpoint      = caller.checkpoint;
+        src             = caller.src;
+        captured_scopes = caller.captured_scopes;
+    }
+
     context(const context& parent) : context() {
         // inherit variables (for example, when entering a new scope)
         auto& pvar = parent.env->as_ordered_object();
         for (const auto& pair : pvar) { set_val(pair.first, pair.second); }
-        current_time = parent.current_time;
-        is_get_stats = parent.is_get_stats;
-        src          = parent.src;
+        current_time    = parent.current_time;
+        checkpoint      = parent.checkpoint;
+        src             = parent.src;
+        captured_scopes = parent.captured_scopes;
     }
 
     value get_val(const std::string& name) {
@@ -106,6 +117,8 @@ struct context {
 
 private:
     value_object env;
+    std::shared_ptr<std::vector<value_object>> captured_scopes =
+        std::make_shared<std::vector<value_object>>();
 };
 
 // utils for visiting AST nodes
@@ -159,6 +172,19 @@ static void chk_type(const statement_ptr& ptr) {
  */
 struct expression : public statement {
     std::string type() const override { return "Expression"; }
+};
+
+struct output_statement : public statement {
+    statement_ptr operand;
+
+    explicit output_statement(statement_ptr&& operand) : operand(std::move(operand)) {}
+
+    std::string type() const override { return "Output"; }
+
+    value execute_impl(context& ctx) override {
+        const auto result = operand->execute(ctx);
+        return mk_val<value_string>(result->as_string());
+    }
 };
 
 // Statements
@@ -742,7 +768,6 @@ struct rethrown_exception : public std::exception {
 //////////////////////
 
 static void gather_string_parts_recursive(const value& val, value_string& parts) {
-    // TODO: probably allow print value_none as "None" string? currently this breaks some templates
     if (is_val<value_string>(val)) {
         const auto& str_val = cast_val<value_string>(val)->val_str;
         parts->val_str.append(str_val);
@@ -778,22 +803,6 @@ struct runtime {
     static value_string gather_string_parts(const value& val) {
         value_string parts = mk_val<value_string>();
         gather_string_parts_recursive(val, parts);
-        // join consecutive parts with the same type
-        auto& p = parts->val_str.parts;
-        if (p.empty()) { return parts; }
-        size_t w = 0;
-        for (size_t r = 1; r < p.size(); r++) {
-            if (p[w].is_input == p[r].is_input) {
-                p[w].val += p[r].val;
-            } else {
-                w++;
-                if (w != r) {
-                    // the guard is needed, self-move leaves the string in an unspecified state
-                    p[w] = std::move(p[r]);
-                }
-            }
-        }
-        p.resize(w + 1);
         return parts;
     }
 

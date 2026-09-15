@@ -199,10 +199,10 @@ Engine& Engine::operator=(Engine&&) noexcept = default;
 PreparedPrompt Engine::prepare(PromptInput input, const PreparationControl& control) const {
     nvtx::ScopedRange prepare_range(nvtx::Name::FrontendPrepare, nvtx::Category::Runtime);
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    const SamplingMode sampling_mode =
-        input.options.enable_thinking ? SamplingMode::Thinking : SamplingMode::NonThinking;
     auto prepared      = impl_->active->frontend.prepare(std::move(input), control);
     PromptSummary info = prepared.summary();
+    const SamplingMode sampling_mode =
+        info.starts_in_reasoning ? SamplingMode::Thinking : SamplingMode::NonThinking;
     if (info.prompt_tokens > impl_->active->capacity) {
         throw std::logic_error("target Frontend admitted a prompt beyond Engine capacity");
     }
@@ -270,11 +270,6 @@ std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32
 std::uint32_t Engine::count_tokens(PromptInput input, const PreparationControl& control) const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
     return impl_->active->frontend.count_tokens(std::move(input), control);
-}
-
-PromptCapabilities Engine::prompt_capabilities() const {
-    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
-    return impl_->active->frontend.prompt_capabilities();
 }
 
 ModelSamplingDefaults Engine::sampling_defaults() const {

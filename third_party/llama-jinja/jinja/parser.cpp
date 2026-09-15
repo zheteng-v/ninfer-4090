@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-#define FILENAME "jinja-parser"
-
 namespace jinja {
 
 // Helper to check type without asserting (useful for logic)
@@ -106,11 +104,12 @@ private:
     }
 
     statement_ptr parse_jinja_expression() {
+        const auto pos = current;
         // Consume {{ }} tokens
         expect(token::open_expression, "Expected {{");
         auto result = parse_expression();
         expect(token::close_expression, "Expected }}");
-        return result;
+        return mk_stmt<output_statement>(pos, std::move(result));
     }
 
     statement_ptr parse_jinja_statement() {

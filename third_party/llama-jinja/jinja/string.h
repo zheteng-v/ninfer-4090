@@ -1,60 +1,50 @@
 #pragma once
 
+#include "utils.h"
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "utils.h"
-
 namespace jinja {
 
-// allow differentiate between user input strings and template strings
-// transformations should handle this information as follows:
-// - one-to-one (e.g., uppercase, lowercase): preserve is_input flag
-// - one-to-many (e.g., strip): if input string is marked as is_input, all resulting parts should be
-// marked as is_input
-// - many-to-one (e.g., concat): if ALL input parts are marked as is_input, resulting part should be
-// marked as is_input
+// Origins are opaque input-region identifiers. They never affect rendering or tokenization.
 struct string_part {
-    bool is_input = false; // may skip parsing special tokens if true
+    std::uint32_t origin = 0;
     std::string val;
-
-    bool is_uppercase() const;
-    bool is_lowercase() const;
+    std::optional<std::size_t> source_offset = 0;
 };
 
 struct string {
     std::vector<string_part> parts;
     string() = default;
 
-    string(const std::string& v, bool user_input = false) { parts.push_back({user_input, v}); }
+    string(const std::string& value, std::uint32_t origin = 0) : parts{{origin, value, 0}} {}
 
-    string(int v) { parts.push_back({false, std::to_string(v)}); }
+    string(int value) : string(std::to_string(value)) {}
 
-    string(double v) { parts.push_back({false, std::to_string(v)}); }
+    string(double value) : string(std::to_string(value)) {}
 
-    // mark all parts as user input
-    void mark_input();
-
+    void tag(std::uint32_t origin, bool exact = true);
     std::string str() const;
-    size_t length() const;
+    std::size_t length() const;
+    std::size_t byte_size() const;
     void hash_update(hasher& hash) const noexcept;
-    bool all_parts_are_input() const;
     bool is_uppercase() const;
     bool is_lowercase() const;
-
-    // mark this string as input if other has ALL parts as input
-    void mark_input_based_on(const string& other);
-
     string& append(const string& other);
-
-    // in-place transformations
-
-    string uppercase();
-    string lowercase();
-    string capitalize();
-    string titlecase();
-    string strip(bool left, bool right, std::optional<const std::string_view> chars = std::nullopt);
+    string cut_bytes(std::size_t begin, std::size_t end) const;
+    string slice(std::optional<std::int64_t> start, std::optional<std::int64_t> stop,
+                 std::int64_t step = 1) const;
+    std::vector<string> split(const std::optional<std::string>& separator, int64_t maxsplit,
+                              bool reverse) const;
+    string transformed(std::string text) const;
+    string uppercase() const;
+    string lowercase() const;
+    string capitalize() const;
+    string titlecase() const;
+    string strip(bool left, bool right,
+                 std::optional<const std::string_view> chars = std::nullopt) const;
 };
 
 } // namespace jinja

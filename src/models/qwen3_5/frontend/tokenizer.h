@@ -137,8 +137,7 @@ public:
     std::vector<int> encode(std::string_view text, EncodeOptions options = {}) const;
     BoundaryEncodedText encode_with_boundaries(std::string_view text,
                                                std::span<const std::size_t> byte_boundaries,
-                                               EncodeOptions options                   = {},
-                                               std::span<const ByteSpan> literal_spans = {}) const;
+                                               EncodeOptions options = {}) const;
     std::string decode(std::span<const int> ids, DecodeOptions options = {}) const;
     [[nodiscard]] DecodedTokenView decoded_token(int id) const;
     [[nodiscard]] std::string_view decode_token_bytes(int id,

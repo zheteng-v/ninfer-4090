@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One-time, standard-library upgrade of the seven known official NInfer v2 inputs.
 
-Run: python upgrade_ninfer_v2_to_v3.py INPUT.ninfer OUTPUT.ninfer
-The input payload, including gaps, is copied unchanged. This script is self-contained.
+Run: python3 upgrade_ninfer_v2_to_v3.py INPUT.ninfer OUTPUT.ninfer
+Weight bytes are preserved and the maintained Qwen chat template is installed.
 """
 
 from __future__ import annotations
@@ -769,8 +769,26 @@ def upgrade(input_path, output_path):
     input_path, output_path = Path(input_path), Path(output_path)
     if input_path.resolve() == output_path.resolve():
         raise ValueError("input and output must differ")
-    old, source_start, payload = read_v2(input_path)
+    old, source_start, source_payload = read_v2(input_path)
     directory = make_directory(old["identity"], old["objects"])
+    template_name = (
+        "qwen3_8.jinja"
+        if old["identity"]["model_id"].startswith("qwen3.8-")
+        else "qwen3_6.jinja"
+    )
+    template = (
+        Path(__file__).resolve().parent / "chat_templates" / template_name
+    ).read_bytes()
+    template_id = directory["components"]["text"]["resources"]["chat_template.jinja"]
+    template_object = next(
+        obj for obj in directory["objects"] if obj["id"] == template_id
+    )
+    # Append the replacement so every existing weight keeps its original payload offset.
+    template_offset = align(source_payload, 256)
+    template_object.update(offset=template_offset, bytes=len(template))
+    directory["objects"].remove(template_object)
+    directory["objects"].append(template_object)
+    payload = template_offset + len(template)
     data, entry_start = layout(output_path, directory, payload)
     targets = [output_path] + [
         output_path.parent / f["path"] for f in directory["files"][1:]
@@ -783,6 +801,7 @@ def upgrade(input_path, output_path):
     try:
         with input_path.open("rb") as source:
             source.seek(source_start)
+            cursor = 0
             for index, (target, file) in enumerate(zip(targets, directory["files"])):
                 fd, temp = tempfile.mkstemp(
                     prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
@@ -803,18 +822,27 @@ def upgrade(input_path, output_path):
                     remaining = file["payload_bytes"]
                     pending = output.tell()
                     while remaining:
-                        chunk = source.read(min(remaining, CHUNK))
-                        if not chunk:
-                            raise ValueError("v2 payload ended prematurely")
+                        if cursor < source_payload:
+                            chunk = source.read(
+                                min(remaining, CHUNK, source_payload - cursor)
+                            )
+                            if not chunk:
+                                raise ValueError("v2 payload ended prematurely")
+                            os.posix_fadvise(
+                                source.fileno(),
+                                source.tell() - len(chunk),
+                                len(chunk),
+                                os.POSIX_FADV_DONTNEED,
+                            )
+                        elif cursor < template_offset:
+                            chunk = bytes(min(remaining, template_offset - cursor))
+                        else:
+                            begin = cursor - template_offset
+                            chunk = template[begin : begin + min(remaining, CHUNK)]
                         output.write(chunk)
+                        cursor += len(chunk)
                         remaining -= len(chunk)
                         pending += len(chunk)
-                        os.posix_fadvise(
-                            source.fileno(),
-                            source.tell() - len(chunk),
-                            len(chunk),
-                            os.POSIX_FADV_DONTNEED,
-                        )
                         if pending >= WRITEBACK:
                             output.flush()
                             os.fdatasync(output.fileno())
@@ -837,7 +865,7 @@ def upgrade(input_path, output_path):
         for path in temporary:
             path.unlink(missing_ok=True)
     print(
-        f"upgraded {input_path} -> {output_path}: {payload} unchanged payload bytes, {len(targets)} files",
+        f"upgraded {input_path} -> {output_path}: weights preserved, {template_name} installed, {len(targets)} files",
         flush=True,
     )
 
