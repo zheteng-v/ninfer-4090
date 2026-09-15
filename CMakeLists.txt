@@ -92,6 +92,9 @@ else()
 endif()
 find_package(Threads REQUIRED)
 
+# Source base for the custom-template frontend; consumers link it explicitly.
+add_subdirectory(third_party/llama-jinja EXCLUDE_FROM_ALL)
+
 if(NINFER_BUILD_APPS OR BUILD_TESTING)
   # Product operational logging is an offline, repository-pinned dependency. Core-only builds do
   # not configure or link it.
