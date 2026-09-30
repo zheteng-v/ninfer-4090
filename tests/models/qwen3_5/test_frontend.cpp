@@ -1165,8 +1165,13 @@ int test_official_resource_guards() {
     nlohmann::json mismatched_config   = nlohmann::json::parse(mismatched.tokenizer_config_json);
     mismatched_config["chat_template"] = reasoning_effort_template_source();
     mismatched.tokenizer_config_json   = mismatched_config.dump();
-    failures += check(throws_invalid_argument([&] { (void)make_frontend(mismatched); }),
-                      "different standalone and tokenizer-config chat templates were accepted");
+    const Frontend resource_frontend = make_frontend(mismatched, false);
+    const ninfer::PromptCapabilities resource_capabilities =
+        resource_frontend.prompt_capabilities();
+    failures += check(!resource_capabilities.reasoning_effort.low &&
+                          !resource_capabilities.reasoning_effort.medium &&
+                          !resource_capabilities.reasoning_effort.xhigh,
+                      "tokenizer-config compatibility template overrode the artifact resource");
 
     FrontendResources unknown = resources("{{ messages }}");
     failures += check(throws_invalid_argument([&] { (void)make_frontend(unknown); }),
@@ -1512,7 +1517,7 @@ int test_image_resize_rejection_policy() {
 // and without duplicating an explicit anchor at the same frontier.
 int test_automatic_private_anchor_opportunities() {
     int failures               = 0;
-    const Frontend frontend    = FrontendFactory::create_component(resources(), false);
+    const Frontend frontend    = make_frontend(resources(), false);
 
     const auto text_message = [](ninfer::ChatRole role, const char* text) {
         ninfer::ChatMessage message;
@@ -1698,10 +1703,10 @@ int test_media_admission_uses_aggregate_resources(const Frontend& frontend) {
 // Agent clients resend every earlier image with each turn, so the scratchpad cap must bound one
 // item: a conversation whose images sum past vision_max_tokens stays admissible.
 int test_vision_max_tokens_bounds_each_item() {
-    ninfer::targets::qwen3_6::FrontendOptions options;
+    ninfer::models::qwen3_5::FrontendOptions options;
     options.max_context       = 65'536;
     options.vision_max_tokens = 1'024;
-    const Frontend frontend   = FrontendFactory::create_component(resources(), options);
+    const Frontend frontend   = make_frontend(resources(), options);
 
     constexpr std::size_t kItems          = 4;
     constexpr std::uint64_t kItemTokens   = 32 * 24;
