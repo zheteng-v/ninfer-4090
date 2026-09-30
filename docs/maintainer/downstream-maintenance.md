@@ -39,16 +39,19 @@ Branch roles:
 
 - `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. It currently preserves
   the proven v2/sm89 line.
-- `sync/YYYY-MM-DD-upstream-v3`: temporary integration branch created from the audited
-  `upstream/master`, not from the old downstream. Ada support is replayed as small reviewed commits.
+- `sync/YYYY-MM-DD-v3-sm89`: temporary integration branch based on the last validated Ada line,
+  with the upstream v3 architecture replayed in its original commit order and conflicts reviewed.
 - `perf/<topic>`, `fix/<topic>`, `feat/<topic>`: one bounded decision per branch.
 - `vendor/sergiuszm-rtx4090-port`: optional read-only mirror of the observed vendor head. No local
   work starts from this name without a fresh audit.
 
 Do not merge `upstream/master` wholesale into the current v2 line. At the 2026-09-30 baseline the
-two sides have both rewritten core artifact/model/runtime code. The sustainable migration is a
-clean v3 line based on upstream plus explicit Ada ports. `main` remains the rollback line until the
-v3 candidate passes every release gate.
+two sides have both rewritten core artifact/model/runtime code. A direct sm89 build of the audited
+master was attempted and rejected: current master unconditionally reaches Hopper/Blackwell TMA,
+cluster barrier, block-scale MMA, and PDL instructions in multiple core paths. The active migration
+therefore starts from the validated Ada line and replays the upstream v3 converter, loader, and
+bound-instance Engine milestones before selectively adopting later work. `main` remains the
+rollback line until the v3 candidate passes every release gate.
 
 ## Mandatory iteration start
 
@@ -150,8 +153,9 @@ reports intended for the community.
 
 ### P1 — boot a minimal v3/sm89 candidate
 
-Create `sync/YYYY-MM-DD-upstream-v3` from the audited `upstream/master`. Port only what is necessary
-to compile and load on Ada:
+Create `sync/YYYY-MM-DD-v3-sm89` from the audited `sergiuszm/rtx4090-port` and replay the upstream
+v3 architecture milestones in dependency order. Port only what is necessary to compile and load
+on Ada:
 
 1. CMake/CUDA architecture admission for `sm_89` and runtime capability reporting;
 2. groupwise Q4/Q5/Q6/Q8 and BF16/INT8 paths already meaningful on Ada;
@@ -163,12 +167,31 @@ to compile and load on Ada:
 Acceptance: clean build, artifact tests, exact short-answer probe, and no unsupported Blackwell path
 selected. This milestone is correctness-only; no performance claim is allowed.
 
+Status on 2026-09-30:
+
+- [x] upstream v3 converter (`168fdd81`), loader (`4cde7ad0`), and bound-instance Engine
+  (`04350ba9`) integrated with authorship preserved;
+- [x] complete Release build for `sm_89` using CUDA 13.1 and GCC 14, including `ninfer`,
+  `ninfer-serve`, and `ninfer-perplexity`;
+- [x] artifact reader, materializer, writer interop, and Qwen3.5 loader component tests pass;
+- [x] the official 20,437,521,664-byte `qwen3_8_27b_v3.ninfer` parses as artifact v3 and host-binds
+  Text (17,093,490,688 device bytes), MTP (17,544,758,272), DFlash2 (19,320,283,648), and Vision
+  (17,389,210,112);
+- [x] NVFP4/K8V4 runtime KV selections fail early on sm89 instead of reaching stub kernels;
+- [ ] cold device materialization and an exact short-answer request (deferred to a service window;
+  the production v2 process currently owns 27+ GiB on the RTX 4090).
+
 ### P2 — restore the production feature envelope
 
 Port or redesign, in order: INT8 KV, paged long context, MTP3, state/prefix persistence, OpenAI and
 Anthropic serving, Vision, E8 only if it still buys useful capacity, then DFlash2 as a research path.
 Run the full release gates after each subsystem. Upgrade the existing v2 artifact on a copy and keep
 the original immutable until v3 reaches production.
+
+The initial v3 baseline intentionally defers the fork-local disk session-slot persistence and its
+serve metrics. Their old implementation depended on deleted target-private Program types; they must
+be ported to the new model-independent Program contracts with new round-trip and eviction tests,
+not retained as declarations backed by incompatible state.
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -205,7 +228,8 @@ prefill, alternative KV codecs, or larger speculative windows enter the tourname
 The vendor and upstream master diverge after `d4929686`: the vendor has 150 unique commits and
 upstream master has 83. Important upstream milestones include `168fdd81` (v3 converter),
 `4cde7ad0` (v3 loader), `04350ba9` (v3 bound model parameters), and `469f014c` (offline-upgrade
-guidance). This scale of divergence is why P1 starts from upstream rather than merging into v2.
+guidance). The first direct-master compile established that later master kernels are not a usable
+Ada baseline; P1 instead replays these architecture milestones onto the proven sm89 line.
 
 PRs to watch from this audit include Neroued #292 (reported Q5 small-batch/MTP3 gain), #297
 (workspace overflow state), #294 (structured output with speculation), #274 (shared-prefix catalog),
@@ -220,3 +244,4 @@ release rather than creating a second roadmap.
 | Date | Downstream result | Neroued head | sergiuszm head | Decision and evidence |
 |---|---|---|---|---|
 | 2026-09-30 | maintenance baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | established two-track v2 production/v3 migration policy; no unvalidated code merge |
+| 2026-09-30 | v3/sm89 integration baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | adopted v3 converter/loader/Engine milestones on the proven Ada base; full Release build and four component tests pass; official v3 artifact host-binds Text/MTP/DFlash2/Vision; device execution and session-slot port remain open |
