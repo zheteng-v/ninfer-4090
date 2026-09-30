@@ -798,6 +798,7 @@ struct TemplateOptions {
     std::string kwargs_json;
     std::optional<bool> enable_thinking;
     std::optional<bool> preserve_thinking;
+    std::optional<RequestedReasoningEffort> reasoning_effort;
 };
 
 TemplateOptions parse_template_options(const Json& body) {
@@ -826,6 +827,23 @@ TemplateOptions parse_template_options(const Json& body) {
     };
     merge("enable_thinking", output.enable_thinking);
     merge("preserve_thinking", output.preserve_thinking);
+
+    // llama.cpp and vLLM also spell the effort control under chat_template_kwargs. Preserve the
+    // complete object for custom templates, but normalize this standard alias for Engine policy.
+    if (kwargs.contains("reasoning_effort") && !kwargs.at("reasoning_effort").is_null()) {
+        const Json& nested = kwargs.at("reasoning_effort");
+        if (!nested.is_string()) {
+            bad_request("reasoning_effort must be a string or null", "chat_template_kwargs");
+        }
+        const std::optional<RequestedReasoningEffort> parsed =
+            parse_requested_reasoning_effort(nested.get<std::string>());
+        if (!parsed) {
+            bad_request("reasoning_effort must be one of none, minimal, low, medium, high, "
+                        "xhigh, or max",
+                        "chat_template_kwargs");
+        }
+        output.reasoning_effort = *parsed;
+    }
     return output;
 }
 
@@ -908,6 +926,14 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
     output.generation.enable_thinking           = template_options.enable_thinking;
     output.generation.preserve_thinking         = template_options.preserve_thinking;
     output.generation.chat_template_kwargs_json = template_options.kwargs_json;
+    if (template_options.reasoning_effort) {
+        if (output.generation.reasoning_effort &&
+            *output.generation.reasoning_effort != *template_options.reasoning_effort) {
+            bad_request("conflicting reasoning_effort values", "reasoning_effort",
+                        "conflicting_template_option");
+        }
+        output.generation.reasoning_effort = template_options.reasoning_effort;
+    }
     apply_openai_prompt_cache_policy(output.generation, cache_policy);
     return output;
 }
