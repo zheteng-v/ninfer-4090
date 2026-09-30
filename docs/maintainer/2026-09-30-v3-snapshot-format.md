@@ -80,11 +80,11 @@ This is a host-side format gate. It does not require or consume a production GPU
 
 The next persistence increments are deliberately separate:
 
-1. define stable Qwen3.5 v3 section IDs and export the complete Program ledger, resident prefix
-   identity/digests, KV/state ownership, checkpoints, and continuation metadata;
-2. validate every section and required relationship into a temporary import object before changing
-   a live Program;
-3. restore through the model-independent Program and resource-manager contracts, including
+1. [complete] define stable Qwen3.5 v3 section IDs and a complete owned staging image for the
+   Program ledger, resident identity/digests, KV/state bytes, checkpoints, and continuation data;
+2. [complete] validate every section and required relationship into a temporary import object
+   before changing a live Program;
+3. capture and restore the physical Program stores through model-independent contracts, including
    rollback/eviction tests;
 4. add atomic file publication (`temporary file -> flush/fsync -> rename -> directory fsync`) and
    bounded reads;

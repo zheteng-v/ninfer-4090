@@ -241,8 +241,11 @@ session-slot increment is now complete: a deterministic, bounded, model-bound v3
 has its own magic, explicit little-endian layout, whole-image and per-section CRC64, and focused
 round-trip/corruption tests. Old `NINFSES1` images are deliberately rejected. Engine/Program state
 export/import, atomic file publication, Serve routes, and restart/eviction tests remain open; the
-presence of legacy public method declarations must not be reported as working persistence. See
-[the v3 snapshot-format report](2026-09-30-v3-snapshot-format.md).
+presence of legacy public method declarations must not be reported as working persistence. The
+second increment defines the complete Qwen3.5 staging image, preserves checkpoint StateImage
+aliases, binds physical State/KV layouts, recomputes prefix digests, and validates all data before
+live Program mutation. See [the container report](2026-09-30-v3-snapshot-format.md) and
+[the Program staging-image report](2026-09-30-v3-program-staging-image.md).
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -309,3 +312,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3/sm89 integration baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | adopted v3 converter/loader/Engine milestones on the proven Ada base; full Release build and focused component tests pass; official v3 artifact host-binds Text/MTP/DFlash2/Vision; device execution and session-slot port remain open |
 | 2026-09-30 | v3/sm89 device fast gate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | official v3 artifact boots at 262K INT8 on the 48 GiB 4090; no-spec and MTP3 text pass; MTP3 reaches 110.6 tok/s short decode and 2.14k tok/s medium prefill; production v2 restored after canary |
 | 2026-09-30 | v3 session snapshot container | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined a portable, model-bound, checksummed v3 container and passed focused round-trip/corruption gates; old `NINFSES1` images are rejected; Program export/import and disk publication remain open |
+| 2026-09-30 | v3 Qwen3.5 Program staging image | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined alias-aware State/KV/identity/checkpoint sections and a fully owned pre-publication validation gate; host-only round-trip and negative tests pass, including DFlash2 without paged Backend KV; physical Program store capture/publish remains open |
