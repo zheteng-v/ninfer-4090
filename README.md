@@ -7,6 +7,13 @@ The engine loads the official groupwise `.ninfer` artifact, serves OpenAI- and
 Anthropic-compatible APIs, and supports paged KV, compatible-prefix reuse, CUDA Graphs, MTP
 speculative decoding, reasoning-effort control, and ReplaySSM state transactions.
 
+This repository is the maintained `zhetengv-gif/ninfer-4090` downstream. The validated production
+line stays on `main`; upstream-v3 work is integrated on dedicated sync branches before it can
+replace that line. Every iteration starts with an audit of both
+[Neroued/ninfer](https://github.com/Neroued/ninfer) and
+[sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090). See the
+[downstream maintenance contract and roadmap](docs/maintainer/downstream-maintenance.md).
+
 This fork targets `sm_89` and Linux. Blackwell-only NVFP4/W4A4 execution is unavailable; the
 engine uses the same groupwise-int path as the 3090 base. The Windows path and the
 Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.

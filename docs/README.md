@@ -40,8 +40,12 @@ The active references under [`maintainer/`](maintainer/) record current architec
 artifact, and maintenance contracts. These files are not additional user workflows or installed
 API documentation.
 
-[Engine architecture](maintainer/engine-architecture.md) is the single top-level reference. The
-other references own narrower contracts:
+The [RTX 4090 downstream maintenance contract](maintainer/downstream-maintenance.md) is the single
+authority for remote ownership, upstream review, branch policy, validation gates, releases, the v3
+migration roadmap, and the append-only downstream sync record.
+
+[Engine architecture](maintainer/engine-architecture.md) is the single top-level runtime reference.
+The other references own narrower contracts:
 
 | Document | Responsibility |
 |---|---|
