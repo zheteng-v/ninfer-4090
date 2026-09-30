@@ -44,7 +44,8 @@
     "speculation": "mtp",
     "draft_tokens": 3,
     "vision": true,
-    "cuda_graph_startup_seconds": 573.7,
+    "cold_cuda_graph_startup_seconds": 573.7,
+    "cached_production_health_seconds": 7.6,
     "runtime_gib": 9.41
   },
   "niah": [
@@ -57,18 +58,18 @@
     "profile": "262144 context and KV, one lane, INT8 KV, MTP3, Vision, greedy, thinking off, prefix reuse off",
     "code_python": {
       "v2_decode_tokens_per_second": 149.3568664540564,
-      "v3_decode_tokens_per_second": 135.37397443511608,
+      "v3_decode_tokens_per_second": 140.42703885600005,
       "v2_mtp": {"accepted": 359, "drafted": 456},
-      "v3_mtp": {"accepted": 363, "drafted": 444},
+      "v3_mtp": {"accepted": 349, "drafted": 483},
       "quality": "both contained pyproject.toml, asyncio, JSONL, and pytest"
     },
     "niah_64k": {
       "v2_exact": true,
       "v3_exact": true,
       "v2_prefill_tokens_per_second": 1884.6976877295876,
-      "v3_prefill_tokens_per_second": 1886.496401370455,
+      "v3_prefill_tokens_per_second": 1884.52,
       "v2_decode_tokens_per_second": 149.58754739763245,
-      "v3_decode_tokens_per_second": 134.31950377204006
+      "v3_decode_tokens_per_second": 149.44
     }
   },
   "dual_lane": {
