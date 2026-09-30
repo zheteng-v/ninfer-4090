@@ -797,7 +797,6 @@ void parse_sampling(const Json& body, GenerationRequest& output) {
 struct TemplateOptions {
     std::optional<bool> enable_thinking;
     std::optional<bool> preserve_thinking;
-    std::optional<RequestedReasoningEffort> reasoning_effort;
 };
 
 TemplateOptions parse_template_options(const Json& body) {
@@ -817,7 +816,7 @@ TemplateOptions parse_template_options(const Json& body) {
     }
     for (auto iterator = kwargs.begin(); iterator != kwargs.end(); ++iterator) {
         if (iterator.key() != "enable_thinking" && iterator.key() != "preserve_thinking" &&
-            iterator.key() != "reasoning_effort" && !iterator.value().is_null()) {
+            !iterator.value().is_null()) {
             bad_request("chat_template_kwargs." + iterator.key() + " is not supported",
                         "chat_template_kwargs", "chat_template_option_not_supported");
         }
@@ -832,24 +831,6 @@ TemplateOptions parse_template_options(const Json& body) {
     };
     merge("enable_thinking", output.enable_thinking);
     merge("preserve_thinking", output.preserve_thinking);
-
-    // llama.cpp and vLLM also spell the effort control as
-    // chat_template_kwargs.reasoning_effort. Parsed here; reconciled with the top-level field by
-    // the caller, which owns the already-parsed value.
-    if (kwargs.contains("reasoning_effort") && !kwargs.at("reasoning_effort").is_null()) {
-        const Json& nested = kwargs.at("reasoning_effort");
-        if (!nested.is_string()) {
-            bad_request("reasoning_effort must be a string or null", "chat_template_kwargs");
-        }
-        const std::optional<RequestedReasoningEffort> parsed =
-            parse_requested_reasoning_effort(nested.get<std::string>());
-        if (!parsed) {
-            bad_request("reasoning_effort must be one of none, minimal, low, medium, high, "
-                        "xhigh, or max",
-                        "chat_template_kwargs");
-        }
-        output.reasoning_effort = *parsed;
-    }
     return output;
 }
 
@@ -931,14 +912,6 @@ OpenAIChatRequest parse_chat_completion_request(const Json& body, const RequestL
     const TemplateOptions template_options = parse_template_options(body);
     output.generation.enable_thinking      = template_options.enable_thinking;
     output.generation.preserve_thinking    = template_options.preserve_thinking;
-    if (template_options.reasoning_effort) {
-        if (output.generation.reasoning_effort &&
-            *output.generation.reasoning_effort != *template_options.reasoning_effort) {
-            bad_request("conflicting reasoning_effort values", "reasoning_effort",
-                        "conflicting_template_option");
-        }
-        output.generation.reasoning_effort = template_options.reasoning_effort;
-    }
     apply_openai_prompt_cache_policy(output.generation, cache_policy);
     return output;
 }

@@ -28,8 +28,6 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -372,6 +370,7 @@ struct SequenceState {
     runtime::PrefillWork rebuild_work;
     std::uint32_t rebuild_tail_begin = 0;
 };
+
 struct SharedPrefixState {
     std::optional<SequenceKVBundle> kv;
     StateImageHandle state;
@@ -576,11 +575,6 @@ public:
     const bool use_cuda_graph;
     const bool causal_scoring;
     const std::size_t kv_payload_bytes;
-    const std::size_t text_kv_bytes;
-    const std::size_t mtp_kv_bytes;
-    const std::size_t gdn_state_bytes;
-    const std::size_t dflash_kv_bytes;
-    const std::size_t replay_records_bytes;
     const std::size_t graph_allowance_bytes;
     const WorkspacePlan workspace_plan;
 
@@ -635,28 +629,6 @@ public:
 
     std::size_t workspace_logical_peak_bytes = 0;
     std::size_t vision_handoff_peak_bytes    = 0;
-
-    // Fork-local session persistence (disk slots): serialize one catalogued continuation to a
-    // host snapshot and rebuild one from a snapshot. Digest identity hashes the ledger prefix
-    // (FNV-1a 64, session_snapshot_impl.h). The v3 format persists the endpoint checkpoint
-    // only; rewrite checkpoints and long anchors are not serialized and a restored
-    // continuation offers just its endpoint frontier.
-    [[nodiscard]] std::uint32_t
-    continuation_depth(const ContinuationHandle& continuation) const noexcept;
-    [[nodiscard]] std::string continuation_digest(const ContinuationHandle& continuation) const;
-    [[nodiscard]] std::vector<SlotCheckpoint>
-    continuation_checkpoints(const ContinuationHandle& continuation) const;
-    [[nodiscard]] qwen3_6::ContinuationSummary
-    continuation_summary(const ContinuationHandle& continuation) const;
-    [[nodiscard]] qwen3_6::RetainedSessionSnapshot
-    save_continuation(const ContinuationHandle& continuation, std::string_view model_binding);
-    [[nodiscard]] ContinuationHandle restore_continuation(std::span<const std::uint8_t> snapshot,
-                                                          std::string_view model_binding);
-    [[nodiscard]] qwen3_6::SessionSnapshotTraffic session_snapshot_traffic() const noexcept {
-        return snapshot_traffic_;
-    }
-
-    qwen3_6::SessionSnapshotTraffic snapshot_traffic_;
 
 private:
     void advance_resource_revision() noexcept {
@@ -930,9 +902,7 @@ private:
                  const SequenceState* source, const SharedPrefixState* shared_source,
                  std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source);
     [[nodiscard]] StartResult start_request(MaterializationTransaction& transaction);
-    // False when the plan went stale between planning and preparation. The caller aborts the
-    // transaction instead of failing the Engine: nothing has been mutated at that point.
-    [[nodiscard]] bool prepare_materialization(MaterializationTransaction& transaction);
+    void prepare_materialization(MaterializationTransaction& transaction);
     void enqueue_materialization_transfers(MaterializationTransaction& transaction);
     void record_materialization_transfer_observations(MaterializationTransaction& transaction);
     void publish_materialization_transfers(MaterializationTransaction& transaction);
@@ -989,9 +959,6 @@ private:
     owner_exclusive_resources(const SharedPrefixState& shared) const;
     [[nodiscard]] detail::PhysicalResources physical_occupancy() const noexcept;
     [[nodiscard]] bool physical_peak_fits(detail::PhysicalResources peak) const noexcept;
-    [[nodiscard]] std::optional<StateImageHandle>
-    try_selected_state(const SequenceState& sequence, ReusePath reuse,
-                       std::optional<runtime::CheckpointRef> checkpoint) const;
     [[nodiscard]] StateImageHandle
     selected_state(const SequenceState& sequence, ReusePath reuse,
                    std::optional<runtime::CheckpointRef> checkpoint) const;

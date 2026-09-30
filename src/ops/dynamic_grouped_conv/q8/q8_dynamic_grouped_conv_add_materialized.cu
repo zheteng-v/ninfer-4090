@@ -34,7 +34,7 @@ template <int InputRows, int TileColumns>
 void tiled_projection(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
 #if defined(NINFER_SM86)
     // Eight K-warps overflow the 48 KB sm_86/sm_89 static shared-memory cap from a 40-token tile
-    // on (w8_small_t_mma.cuh); keep the 5090's 8-warp T<=40 route for the 4096-row input only
+    // on (q8_small_t_mma.cuh); keep the 5090's 8-warp T<=40 route for the 4096-row input only
     // where it fits.
     constexpr int Warps = TileColumns <= 32 ? 8 : 4;
 #else

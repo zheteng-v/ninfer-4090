@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 #include <utility>
 
@@ -23,22 +22,6 @@ struct CompletionUsage {
     int completion_tokens = 0;
     int cached_tokens     = 0;
     int reasoning_tokens  = 0;
-
-    // llama.cpp-compatible `timings` block data, emitted so proxies like llama-swap can derive
-    // per-request Prefill/Decode rates and draft stats. has_timings gates emission; seconds
-    // values are wall-clock phase times.
-    bool has_timings              = false;
-    double prefill_seconds        = 0.0;
-    double decode_seconds         = 0.0;
-    double ttft_seconds           = 0.0;
-    std::uint64_t draft_tokens    = 0;
-    std::uint64_t accepted_tokens = 0;
-
-    // Slot identity emitted next to `timings`: the lane that served the request (id_slot >= 0)
-    // and its retained session's digest, the handle for /slots save preconditions. Both are
-    // omitted from payloads when absent.
-    int id_slot = -1;
-    std::string session_digest;
 };
 
 struct CompletionTimings {
@@ -187,23 +170,7 @@ CompletionUsage usage_from(const GenerationOutcome& outcome) {
         .completion_tokens = outcome.completion_tokens,
         .cached_tokens     = static_cast<int>(outcome.metrics.prefix_cache_hit_tokens),
         .reasoning_tokens  = outcome.reasoning_tokens,
-        .has_timings       = true,
-        .prefill_seconds   = outcome.metrics.prefill_seconds,
-        .decode_seconds    = outcome.metrics.decode_seconds,
-        .ttft_seconds      = outcome.metrics.ttft_seconds,
-        .draft_tokens      = outcome.metrics.speculative_draft_tokens,
-        .accepted_tokens   = outcome.metrics.speculative_accepted_tokens,
-        .id_slot           = outcome.id_slot,
-        .session_digest    = outcome.session_digest,
     };
-}
-
-// llama.cpp-compatible `timings` block: consumed by proxies (llama-swap) to populate per-request
-// Which lane served the request and, when that lane retained the finished session, its digest -
-// what a client needs to target /slots operations safely.
-void add_slot_identity(Json& payload, const CompletionUsage& usage) {
-    if (usage.id_slot >= 0) { payload["id_slot"] = usage.id_slot; }
-    if (!usage.session_digest.empty()) { payload["session_digest"] = usage.session_digest; }
 }
 
 Json base_payload(const OpenAIChatResponseIdentity& identity, const char* object) {
@@ -237,7 +204,6 @@ std::string usage_chunk(const OpenAIChatResponseIdentity& identity, const Comple
     payload["choices"] = Json::array();
     payload["usage"]   = usage_json(usage);
     payload["timings"] = std::move(timings);
-    add_slot_identity(payload, usage);
     return event(std::move(payload));
 }
 
@@ -277,10 +243,8 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
               {"logprobs", nullptr},
               {"finish_reason",
                has_tool_calls ? Json("tool_calls") : Json(finish_reason(outcome.finish_reason))}}});
-    const CompletionUsage usage = usage_from(outcome);
-    payload["usage"]            = usage_json(usage);
-    payload["timings"]          = timings_json(outcome_timings(outcome));
-    add_slot_identity(payload, usage);
+    payload["usage"]   = usage_json(usage_from(outcome));
+    payload["timings"] = timings_json(outcome_timings(outcome));
     return payload.dump();
 }
 

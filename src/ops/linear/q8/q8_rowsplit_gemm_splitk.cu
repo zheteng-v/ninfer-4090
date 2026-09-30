@@ -132,7 +132,7 @@ void launch_q8_dflash_medium(const Tensor& x, const Weight& w, Tensor& out, cuda
     }
 
 #if defined(NINFER_SM86)
-    launch_w8_exact_t_composite(x, w, out, stream);
+    launch_q8_exact_t_composite(x, w, out, stream);
 #else
     if (t <= 64) {
         launch_medium<64, 8, 4, 1>(x, w, out, stream);
@@ -162,7 +162,7 @@ void launch_q8_dflash_medium(const Tensor& x, const Weight& w, Tensor& out, cuda
 void launch_q8_medium_splitk_c144(const Tensor& x, const Weight& w, Tensor& out,
                                   cudaStream_t stream) {
 #if defined(NINFER_SM86)
-    launch_w8_exact_t_composite(x, w, out, stream);
+    launch_q8_exact_t_composite(x, w, out, stream);
 #else
     launch_medium_route<144, 2, 9, 2>(x, w, out, stream);
 #endif

@@ -17,11 +17,7 @@
 #include <system_error>
 #include <utility>
 
-#ifdef _WIN32
-#include <process.h>
-#else
 #include <unistd.h>
-#endif
 
 namespace ninfer::serve {
 namespace {
@@ -42,12 +38,7 @@ std::uint64_t unix_time_ms() {
 std::string new_server_instance_id() {
     const auto now    = std::chrono::system_clock::now().time_since_epoch();
     const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-#ifdef _WIN32
-    const auto process_id = ::_getpid();
-#else
-    const auto process_id = ::getpid();
-#endif
-    return "serve-" + std::to_string(static_cast<long long>(process_id)) + '-' +
+    return "serve-" + std::to_string(static_cast<long long>(::getpid())) + '-' +
            std::to_string(micros);
 }
 
@@ -143,14 +134,6 @@ const char* kv_cache_name(ninfer::KvCacheStorage storage) {
         return "int8-group64";
     case ninfer::KvCacheStorage::Fp8E4M3Row256:
         return "fp8-e4m3-row256";
-    case ninfer::KvCacheStorage::RotatedInt8KeyInt4ValueGroup64:
-        return "rk8v4";
-    case ninfer::KvCacheStorage::RotatedInt4KeyInt4ValueGroup64:
-        return "rk4v4";
-    case ninfer::KvCacheStorage::RK4V4E8:
-        return "rk4v4-e8";
-    case ninfer::KvCacheStorage::RK2V4E8:
-        return "rk2v4-e8";
     case ninfer::KvCacheStorage::Nvfp4Group16:
         return "nvfp4";
     case ninfer::KvCacheStorage::Fp8KeyNvfp4Value:
@@ -345,7 +328,6 @@ Json materialization_json(const ninfer::MaterializationDiagnostics& diagnostics)
         {"budget_exhausted", diagnostics.budget_exhausted},
         {"selected_degradation_units", diagnostics.selected_degradation_units},
         {"selected_maximal_fallback", diagnostics.selected_maximal_fallback},
-        {"best_reuse_prompt_tokens", diagnostics.best_reuse_prompt_tokens},
         {"initial_predicted_total_ns", diagnostics.initial_predicted_total_ns},
         {"first_improvement_ns", diagnostics.first_improvement_ns
                                      ? Json(*diagnostics.first_improvement_ns)
@@ -368,6 +350,12 @@ double nanoseconds_to_seconds(std::uint64_t value) noexcept {
 
 double nanoseconds_to_microseconds(std::uint64_t value) noexcept {
     return static_cast<double>(value) * 1.0e-3;
+}
+
+double request_host_exposed_seconds(const ninfer::GenerationEngineTiming& timing) noexcept {
+    return timing.engine_boundary_exposed_seconds + timing.program_submit_exposed_seconds +
+           timing.program_post_exposed_seconds + timing.engine_commit_output_exposed_seconds +
+           timing.engine_maintenance_exposed_seconds;
 }
 
 Json request_engine_timing_json(const ninfer::GenerationEngineTiming& timing) {
@@ -463,7 +451,6 @@ std::string format_server_start_json(
                                                           {"media_live_bytes", options.media_live_bytes},
                                                           {"media_preprocess_threads", options.media_preprocess_threads},
                                                           {"request_log_jsonl", options.request_log_jsonl},
-                                                          {"slot_save_path", options.slot_save_path},
                                                           {"default_output_tokens", options.default_max_tokens},
                                                           {"default_thinking", options.enable_thinking},
                                                           {"default_thinking_budget", std::move(default_thinking_budget)},
@@ -522,9 +509,7 @@ std::string format_server_start_json(
                    {"max_private_continuations", cache.max_private_continuations.value()},
                    {"max_shared_prefixes", cache.max_shared_prefixes.value()},
                    {"max_long_anchors_per_continuation",
-                    cache.max_long_anchors_per_continuation.value()},
-                   {"automatic_private_anchors",
-                    resolve_automatic_private_anchors(options, cache)}}}};
+                    cache.max_long_anchors_per_continuation.value()}}}};
     record["sampling_defaults"] =
         Json{{"thinking", preset_json(sampling_defaults.thinking)},
              {"non_thinking", preset_json(sampling_defaults.non_thinking)},
