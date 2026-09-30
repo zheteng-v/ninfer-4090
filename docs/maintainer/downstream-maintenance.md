@@ -222,6 +222,24 @@ were also removed from the v3 test target. They are not silently supported by th
 runtime. Reintroducing either feature requires an explicit v3 implementation, help text, parser
 tests, runtime coverage, and a memory/correctness comparison against INT8 KV.
 
+Serving-envelope status on 2026-09-30:
+
+- [x] the repository's OpenAI Chat/Responses, Anthropic, stored-response continuation/deletion,
+  streaming, token-count, and Vision contract passes on the official v3 artifact;
+- [x] cancellation before and after first output releases transport and Engine capacity, and a
+  following probe completes;
+- [x] a blocked non-streaming request returns HTTP 503 `request_queue_timeout` at its configured
+  deadline;
+- [x] a short second-lane request completes during a long first-lane decode;
+- [x] production-compatible `/metrics` is restored on v3 using live Engine prefill/decode totals
+  and request-lifetime processing/deferred gauges;
+- [ ] streaming disconnect and cancellation still need a repeated mixed-protocol soak before a v3
+  release candidate can replace `main`.
+
+See [the v3 serving fast-gate report](2026-09-30-v3-serving-fast-gate.md). Disk session-slot
+persistence remains intentionally deferred: the v3 model-independent Program contracts require a
+new snapshot format and round-trip tests rather than a mechanical replay of the v2 implementation.
+
 ### P3 — recover and exceed the sm89 baseline
 
 Profile the v3 candidate with Nsight Systems/Compute and target measured bottlenecks:
@@ -269,6 +287,12 @@ A second audit immediately before the generic-Jinja iteration found the same imm
 `upstream/master@d44ab584`, `upstream/dev@75a89050`, and
 `sergiuszm/rtx4090-port@aeeba414`. No newer upstream commit was present to supersede the selected
 Jinja sequence.
+
+The serving-gate iteration repeated the audit at `fe500520` and observed the same three heads.
+Neroued PR #299 (duplicate tool-call parameters) is classified `watch`: it changes frontend parse
+policy and needs a focused correctness fixture before adoption. The existing production metrics
+series (`4277f14b`, `656b0df7`, `25297d06`) was classified `adapt` and ported to v3's EngineCore and
+request-lifetime ownership.
 
 ## Append-only sync record
 

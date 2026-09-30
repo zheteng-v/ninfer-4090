@@ -32,7 +32,9 @@ runtime architecture from upstream. It has been compiled end to end for `sm_89`,
 It also completes real 262K INT8 device startup and text inference with both no speculation and
 MTP3. Upstream's generic Jinja executor is integrated and has passed reference-template, OpenAI
 tool-call, Vision, and dual-lane 200K probes on the real model. The production v2 line remains the
-default until the remaining release gates finish.
+default until the remaining release gates finish. The v3 line also restores live Prometheus
+`/metrics` and passes focused OpenAI/Anthropic streaming, cancellation, queue-timeout, and
+two-lane-isolation gates.
 
 ## Measured results on the RTX 4090
 
