@@ -50,6 +50,7 @@ The other references own narrower contracts:
 | Document | Responsibility |
 |---|---|
 | [Engine architecture](maintainer/engine-architecture.md) | model/config/weight ownership, loading-to-execution flow, requests, scheduling, transactions and graphs |
+| [RTX 4090 performance program](maintainer/sm89-performance-roadmap.md) | active sm89 baseline, upstream targets, ranked performance hypotheses, experiment order, acceptance gates and decision log |
 | [Artifact container](maintainer/artifact-container.md) | v3 directory, objects, logical bindings, Uses, resources and file framing/sharding |
 | [Numeric formats](maintainer/tensor-formats.md) | represented values, codes/scales, conversion arithmetic and numerical interpretation |
 | [Storage layouts](maintainer/storage-layouts.md) | packing, plane offsets, padding, encoded sizes and view addressing |

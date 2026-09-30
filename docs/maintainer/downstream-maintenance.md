@@ -269,6 +269,12 @@ decode isolation, not parallel long-prefill throughput.
 
 ### P3 — recover and exceed the sm89 baseline
 
+The active authority for this phase is the
+[RTX 4090 48 GiB performance program](sm89-performance-roadmap.md). It owns the current scorecard,
+official RTX 5090 reference conditions, hardware interpretation, ranked hypotheses, experiment
+order, acceptance rules, and append-only performance decision log. Update it for every performance
+iteration instead of creating competing plans.
+
 Profile the v3 candidate with Nsight Systems/Compute and target measured bottlenecks:
 
 - Q5/Q6/Q8 small-batch linear and fused projection routes used by MTP3;
@@ -338,3 +344,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3 durable Engine session slots | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored crash-durable save/restore/erase/list and guarded eviction auto-save; host contracts and one real-artifact fresh-Engine round-trip pass; Serve routes remain open |
 | 2026-10-01 | v3/sm89 release candidate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | clean Release sm89 build; all 127 CTest entries pass or skip only unsupported/real-artifact fixtures; compatible real-artifact gates, 8K/64K/128K/256K exact NIAH, cancellation, durable slots, Vision and 20-cycle mixed protocol soak pass; v2 rollback tagged; long-prefill serialization and roughly 9.5-minute CUDA Graph startup retained as documented operational limits |
 | 2026-10-01 | v3/sm89 production promotion | `d44ab584` (`dev` `75a89050`) | `aeeba414` | merged the validated candidate into `main`, rebuilt the native sm89 server, switched `inferctl ninfer-single` to the v3 artifact, and passed authenticated health/model/text/metrics plus a 310,208,576-byte durable-slot save/erase/restore round trip; v2 binary, config, artifact and tag retained |
+| 2026-10-01 | sm89 performance program | `d44ab584` (`dev` `75a89050`) | `aeeba414` | verified the official Qwen3.8 RTX 5090 campaign and established one active performance roadmap; classify SM-count launch refactors and FP8 attention as adapt, DFlash per-chunk binding as adopt/adapt, Q5 K-split PR #292 as benchmark-first/retune, and native NVFP4 work as not applicable to direct sm89 execution; Phase 0 freezes the same-method v2/v3 baseline before kernel changes |

@@ -35,7 +35,8 @@ tool-call, Vision, and dual-lane 200K probes on the real model. The v3 line also
 `/metrics` and passes focused OpenAI/Anthropic streaming, cancellation, queue-timeout, and
 two-lane-isolation gates. The complete release evidence is in the
 [v3/sm89 release record](docs/maintainer/2026-10-01-v3-sm89-release.md); tagged v2 remains the
-rollback line.
+rollback line. Performance recovery and Ada-specific optimization are tracked in the
+[RTX 4090 48 GiB performance program](docs/maintainer/sm89-performance-roadmap.md).
 
 ## Retained v2 performance baseline on the RTX 4090
 
