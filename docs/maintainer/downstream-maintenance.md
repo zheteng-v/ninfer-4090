@@ -43,9 +43,8 @@ be committed.
 
 Branch roles:
 
-- `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. The tagged
-  `v2-sm89-production-2026-09-30` line remains the rollback source while the v3 release candidate
-  completes canary deployment.
+- `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. It runs the promoted
+  v3/sm89 line; tagged `v2-sm89-production-2026-09-30` remains the rollback source.
 - `sync/YYYY-MM-DD-v3-sm89`: temporary integration branch based on the last validated Ada line,
   with the upstream v3 architecture replayed in its original commit order and conflicts reviewed.
 - `perf/<topic>`, `fix/<topic>`, `feat/<topic>`: one bounded decision per branch.
@@ -56,9 +55,9 @@ Do not merge `upstream/master` wholesale into the current v2 line. At the 2026-0
 two sides have both rewritten core artifact/model/runtime code. A direct sm89 build of the audited
 master was attempted and rejected: current master unconditionally reaches Hopper/Blackwell TMA,
 cluster barrier, block-scale MMA, and PDL instructions in multiple core paths. The active migration
-therefore starts from the validated Ada line and replays the upstream v3 converter, loader, and
-bound-instance Engine milestones before selectively adopting later work. `main` remains the
-rollback line until the v3 candidate passes every release gate.
+therefore started from the validated Ada line and replayed the upstream v3 converter, loader, and
+bound-instance Engine milestones before selectively adopting later work. That candidate passed
+the release gates and was promoted on 2026-10-01; the annotated v2 tag is now the rollback line.
 
 ## Mandatory iteration start
 
@@ -338,3 +337,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3 Qwen3.5 Program physical import | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored validated continuations through fully reserved State/KV destinations and a non-throwing publication tail; focused H2D round-trip and rollback gates pass; PR #335 remains watch/benchmark-first; durable files and Engine methods remain open |
 | 2026-09-30 | v3 durable Engine session slots | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored crash-durable save/restore/erase/list and guarded eviction auto-save; host contracts and one real-artifact fresh-Engine round-trip pass; Serve routes remain open |
 | 2026-10-01 | v3/sm89 release candidate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | clean Release sm89 build; all 127 CTest entries pass or skip only unsupported/real-artifact fixtures; compatible real-artifact gates, 8K/64K/128K/256K exact NIAH, cancellation, durable slots, Vision and 20-cycle mixed protocol soak pass; v2 rollback tagged; long-prefill serialization and roughly 9.5-minute CUDA Graph startup retained as documented operational limits |
+| 2026-10-01 | v3/sm89 production promotion | `d44ab584` (`dev` `75a89050`) | `aeeba414` | merged the validated candidate into `main`, rebuilt the native sm89 server, switched `inferctl ninfer-single` to the v3 artifact, and passed authenticated health/model/text/metrics plus a 310,208,576-byte durable-slot save/erase/restore round trip; v2 binary, config, artifact and tag retained |
