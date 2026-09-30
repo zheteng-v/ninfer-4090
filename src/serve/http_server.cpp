@@ -269,6 +269,7 @@ void HttpServer::record_request_done(const RequestLogContext& context,
                                      const GenerationOutcome& outcome) {
     request_jsonl_.write_request_done(context, outcome);
     operational_log_.request_done(context, outcome);
+    metrics_.record(outcome);
 }
 
 void HttpServer::record_request_failure(const RequestLogContext& context,
@@ -430,6 +431,13 @@ void HttpServer::register_routes() {
         res.status           = available ? 200 : 503;
         res.set_content(nlohmann::json{{"status", available ? "ok" : "unavailable"}}.dump(),
                         "application/json");
+    });
+    server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
+        res.set_content(metrics_.render(options_.max_concurrency,
+                                        service_ != nullptr ? service_->runtime_stats()
+                                                            : ninfer::RuntimeStats{},
+                                        service_ != nullptr ? service_->active_request_count() : 0),
+                        "text/plain; version=0.0.4");
     });
     server_.Get("/v1/models", [this](const httplib::Request& req, httplib::Response& res) {
         handle_models(req, res);

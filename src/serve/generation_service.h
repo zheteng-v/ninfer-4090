@@ -110,6 +110,10 @@ public:
 
     [[nodiscard]] bool is_available() const { return engine_->is_available(); }
 
+    // Includes preparation, engine admission, generation, and response release. This is the
+    // authoritative public in-flight count used by serving metrics.
+    [[nodiscard]] std::size_t active_request_count() const;
+
     [[nodiscard]] ninfer::MediaCacheSummary media_cache_summary() const {
         return engine_->media_cache_summary();
     }
