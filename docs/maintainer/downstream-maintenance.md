@@ -176,7 +176,8 @@ Status on 2026-09-30:
 - [x] artifact reader, materializer, writer interop, and Qwen3.5 loader component tests pass;
 - [x] the official 20,437,521,664-byte `qwen3_8_27b_v3.ninfer` parses as artifact v3 and host-binds
   Text (17,093,490,688 device bytes), MTP (17,544,758,272), DFlash2 (19,320,283,648), and Vision
-  (17,389,210,112);
+  (17,389,210,112); SHA-256 is
+  `81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da`;
 - [x] NVFP4/K8V4 runtime KV selections fail early on sm89 instead of reaching stub kernels;
 - [ ] cold device materialization and an exact short-answer request (deferred to a service window;
   the production v2 process currently owns 27+ GiB on the RTX 4090).
