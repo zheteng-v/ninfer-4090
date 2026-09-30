@@ -45,6 +45,14 @@ add_library(ninfer_runtime_support STATIC
 ninfer_internal_includes(ninfer_runtime_support)
 target_link_libraries(ninfer_runtime_support PUBLIC ninfer_core)
 
+# Host-only Qwen continuation identity and persistence codec. Keeping this boundary independent
+# from execution kernels makes corruption/round-trip gates cheap enough to run on every change.
+add_library(ninfer_qwen3_5_session_image STATIC
+  models/qwen3_5/program/prefix_identity.cpp
+  models/qwen3_5/program/session_image.cpp)
+ninfer_internal_includes(ninfer_qwen3_5_session_image)
+target_link_libraries(ninfer_qwen3_5_session_image PUBLIC ninfer_runtime_support)
+
 # Generic .ninfer framing, binding, and direct final materialization.
 add_library(ninfer_artifact STATIC
   artifact/schema.cpp
@@ -415,13 +423,12 @@ add_library(ninfer_model_runtime STATIC
   models/qwen3_5/program/speculative/mtp.cpp
   models/qwen3_5/program/speculative/target_verification.cpp
   models/qwen3_5/program/round_buffers.cpp
-  models/qwen3_5/program/prefix_identity.cpp
   models/qwen3_5/program/vision_control.cpp
   models/qwen3_5/execution/visual_scatter.cpp)
 ninfer_internal_includes(ninfer_model_runtime)
 target_link_libraries(ninfer_model_runtime
   PUBLIC ninfer_model_loading ninfer_ops ninfer_runtime_support
-  PRIVATE ninfer_media_decode ninfer_jinja)
+  PRIVATE ninfer_media_decode ninfer_jinja ninfer_qwen3_5_session_image)
 
 if(NINFER_BUILD_MEDIA_ACQUIRE)
   # Product-only path/data/HTTP acquisition. No target package links this library.

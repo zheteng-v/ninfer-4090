@@ -158,6 +158,10 @@ ninfer_add_test(ninfer_qwen3_5_state_image_layout_test
   SOURCES models/qwen3_5/test_state_image_layout.cpp
   LIBRARIES ninfer_engine ninfer_core)
 
+ninfer_add_test(ninfer_qwen3_5_session_image_test
+  SOURCES models/qwen3_5/test_session_image.cpp
+  LIBRARIES ninfer_qwen3_5_session_image)
+
 ninfer_add_test(ninfer_qwen3_5_context_store_test
   SOURCES models/qwen3_5/test_context_store.cpp
   LIBRARIES ninfer_engine ninfer_core)
