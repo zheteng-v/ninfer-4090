@@ -199,10 +199,11 @@ Status on 2026-09-30:
   [the fast-gate report](2026-09-30-v3-sm89-fast-gate.md).
 
 The official v3 artifact carries NInfer's maintained Qwen3.8 chat template while its tokenizer
-configuration retains the Hugging Face compatibility template. This branch accepts the maintained
-template by its exact SHA-256 and maps it to the already implemented reasoning-effort semantics;
-unknown templates remain rejected. The full upstream generic Jinja executor is the preferred
-long-term replacement after its complete dependency chain receives an sm89 review.
+configuration retains the Hugging Face compatibility template. The temporary exact-hash bridge
+used for the first boot has now been superseded by upstream's generic Jinja executor, imported with
+its vendored source base and literal-content fix. Six reference-template comparisons against
+Jinja2 pass, and the real artifact passes text, tool-call, Vision, and two-lane runtime probes. See
+[the generic-Jinja fast-gate report](2026-09-30-generic-jinja-fast-gate.md).
 
 ### P2 — restore the production feature envelope
 
@@ -215,6 +216,11 @@ The initial v3 baseline intentionally defers the fork-local disk session-slot pe
 serve metrics. Their old implementation depended on deleted target-private Program types; they must
 be ported to the new model-independent Program contracts with new round-trip and eviction tests,
 not retained as declarations backed by incompatible state.
+
+The old v2-only `rk4v4-e8`/`k8v4` serve-option assertions and automatic-long-anchor CLI assertions
+were also removed from the v3 test target. They are not silently supported by the current v3
+runtime. Reintroducing either feature requires an explicit v3 implementation, help text, parser
+tests, runtime coverage, and a memory/correctness comparison against INT8 KV.
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -258,6 +264,11 @@ PRs to watch from this audit include Neroued #292 (reported Q5 small-batch/MTP3 
 (workspace overflow state), #294 (structured output with speculation), #274 (shared-prefix catalog),
 #273 (RMSNorm/RoPE routing), and sergiuszm #10 (Windows sm89). All were open when audited; none is
 approved for downstream use without review and local evidence.
+
+A second audit immediately before the generic-Jinja iteration found the same immutable heads:
+`upstream/master@d44ab584`, `upstream/dev@75a89050`, and
+`sergiuszm/rtx4090-port@aeeba414`. No newer upstream commit was present to supersede the selected
+Jinja sequence.
 
 ## Append-only sync record
 

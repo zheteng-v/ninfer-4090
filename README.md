@@ -30,7 +30,9 @@ The `sync/2026-09-30-v3-sm89` integration line uses NInfer artifact v3 and the b
 runtime architecture from upstream. It has been compiled end to end for `sm_89`, and the official
 `qwen3_8_27b_v3.ninfer` artifact has passed host binding for Text, MTP, DFlash2, and Vision.
 It also completes real 262K INT8 device startup and text inference with both no speculation and
-MTP3. The production v2 line remains the default until the remaining release gates finish.
+MTP3. Upstream's generic Jinja executor is integrated and has passed reference-template, OpenAI
+tool-call, Vision, and dual-lane 200K probes on the real model. The production v2 line remains the
+default until the remaining release gates finish.
 
 ## Measured results on the RTX 4090
 
