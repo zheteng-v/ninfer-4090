@@ -11,6 +11,12 @@ The downstream product is a native Linux NInfer server for one `sm_89` RTX 4090 
 VRAM. Its production workload is Qwen3.8-27B groupwise-int, long context, one or two active
 requests, Vision, OpenAI/Anthropic-compatible APIs, and MTP3 speculative decoding.
 
+Its mission is to preserve the original NInfer author's direction while extending it into the best
+practical inference platform a 48 GiB RTX 4090 can provide. Upstream architecture and model support
+lead; this downstream contributes Ada-safe dispatch, kernels, memory policy, deployment profiles,
+and reproducible evidence. Work should benefit the wider 48 GiB 4090 community and remain easy for
+upstream or neighboring ports to review, reproduce, and reuse.
+
 The priorities, in order, are:
 
 1. preserve answer correctness, API contracts, and recoverable production service;
@@ -102,6 +108,13 @@ attributed; they are not copied merely because a headline reports a speedup.
 
 The candidate is not deployable until all applicable rows pass on the physical RTX 4090.
 
+Routine iterations use a deliberately smaller fast gate so upstream synchronization remains
+frequent: a Release `sm_89` incremental build, focused changed-area tests, real-artifact host bind,
+one short no-speculation request, and MTP3 short plus medium-prefill requests. Record TTFT, prefill,
+decode, MTP acceptance, and resident VRAM. The full matrix below is reserved for release candidates,
+kernel/numerical changes, long-context changes, or a result used in a public performance claim.
+Passing the fast gate does not authorize replacing `main` or the production profile.
+
 | Gate | Minimum evidence |
 |---|---|
 | Build | clean Release build for `sm_89`; no accidental `sm_120a` requirement; reproducible compiler/CUDA record |
@@ -173,14 +186,23 @@ Status on 2026-09-30:
   (`04350ba9`) integrated with authorship preserved;
 - [x] complete Release build for `sm_89` using CUDA 13.1 and GCC 14, including `ninfer`,
   `ninfer-serve`, and `ninfer-perplexity`;
-- [x] artifact reader, materializer, writer interop, and Qwen3.5 loader component tests pass;
+- [x] artifact reader, materializer, writer interop, Qwen3.5 loader, and Qwen3.5 frontend
+  component tests pass;
 - [x] the official 20,437,521,664-byte `qwen3_8_27b_v3.ninfer` parses as artifact v3 and host-binds
   Text (17,093,490,688 device bytes), MTP (17,544,758,272), DFlash2 (19,320,283,648), and Vision
   (17,389,210,112); SHA-256 is
   `81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da`;
 - [x] NVFP4/K8V4 runtime KV selections fail early on sm89 instead of reaching stub kernels;
-- [ ] cold device materialization and an exact short-answer request (deferred to a service window;
-  the production v2 process currently owns 27+ GiB on the RTX 4090).
+- [x] cold device materialization succeeds at the production-shaped 262,144-token INT8 KV capacity;
+- [x] real streaming requests pass with no speculation and MTP3, including a 5,891-token
+  medium-prefill request; see
+  [the fast-gate report](2026-09-30-v3-sm89-fast-gate.md).
+
+The official v3 artifact carries NInfer's maintained Qwen3.8 chat template while its tokenizer
+configuration retains the Hugging Face compatibility template. This branch accepts the maintained
+template by its exact SHA-256 and maps it to the already implemented reasoning-effort semantics;
+unknown templates remain rejected. The full upstream generic Jinja executor is the preferred
+long-term replacement after its complete dependency chain receives an sm89 review.
 
 ### P2 — restore the production feature envelope
 
@@ -245,4 +267,5 @@ release rather than creating a second roadmap.
 | Date | Downstream result | Neroued head | sergiuszm head | Decision and evidence |
 |---|---|---|---|---|
 | 2026-09-30 | maintenance baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | established two-track v2 production/v3 migration policy; no unvalidated code merge |
-| 2026-09-30 | v3/sm89 integration baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | adopted v3 converter/loader/Engine milestones on the proven Ada base; full Release build and four component tests pass; official v3 artifact host-binds Text/MTP/DFlash2/Vision; device execution and session-slot port remain open |
+| 2026-09-30 | v3/sm89 integration baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | adopted v3 converter/loader/Engine milestones on the proven Ada base; full Release build and focused component tests pass; official v3 artifact host-binds Text/MTP/DFlash2/Vision; device execution and session-slot port remain open |
+| 2026-09-30 | v3/sm89 device fast gate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | official v3 artifact boots at 262K INT8 on the 48 GiB 4090; no-spec and MTP3 text pass; MTP3 reaches 110.6 tok/s short decode and 2.14k tok/s medium prefill; production v2 restored after canary |

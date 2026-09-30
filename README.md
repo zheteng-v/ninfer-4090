@@ -1,6 +1,8 @@
 # NInfer-4090
 
-NInfer-4090 runs **Qwen3.8-27B** on one 24 GB NVIDIA GeForce RTX 4090. It is an `sm_89` port of
+NInfer-4090 is the community `sm_89` downstream dedicated to pushing **48 GiB RTX 4090** cards as
+far as correctness and reproducible engineering allow. Its primary workload is **Qwen3.8-27B**
+with long context, MTP speculative decoding, and native Linux serving. It is an `sm_89` port of
 [NInfer-3090](https://github.com/Don-Chad/ninfer-3090), which derives from
 [Neroued/ninfer](https://github.com/Neroued/ninfer), a specialized C++20/CUDA inference engine.
 The engine loads the official groupwise `.ninfer` artifact, serves OpenAI- and
@@ -14,14 +16,21 @@ replace that line. Every iteration starts with an audit of both
 [sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090). See the
 [downstream maintenance contract and roadmap](docs/maintainer/downstream-maintenance.md).
 
+The project follows Neroued's architecture and model direction instead of becoming an unrelated
+engine. Generic fixes should go upstream; Ada-specific capability dispatch, kernels, memory
+planning, and 48 GiB profiles stay explicit and measurable here. The goal is to make the resulting
+work useful and reproducible for the wider 48 GiB RTX 4090 community, not to optimize one private
+machine behind unpublished settings.
+
 This fork targets `sm_89` and Linux. Blackwell-only NVFP4/W4A4 execution is unavailable; the
 engine uses the same groupwise-int path as the 3090 base. The Windows path and the
 Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.
 
-The `probe/v3-on-sm89` integration line uses NInfer artifact v3 and the bound-instance Qwen3.5
+The `sync/2026-09-30-v3-sm89` integration line uses NInfer artifact v3 and the bound-instance Qwen3.5
 runtime architecture from upstream. It has been compiled end to end for `sm_89`, and the official
 `qwen3_8_27b_v3.ninfer` artifact has passed host binding for Text, MTP, DFlash2, and Vision.
-The production v2 line remains the default until device loading and inference qualification finish.
+It also completes real 262K INT8 device startup and text inference with both no speculation and
+MTP3. The production v2 line remains the default until the remaining release gates finish.
 
 ## Measured results on the RTX 4090
 
