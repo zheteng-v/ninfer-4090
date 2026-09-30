@@ -448,6 +448,12 @@ FinishResult Program::finish(SequenceHandle sequence) noexcept { return impl_->f
 
 AbortResult Program::abort(SequenceHandle sequence) noexcept { return impl_->abort(sequence); }
 
+std::vector<std::uint8_t>
+Program::export_continuation(const ContinuationHandle& continuation,
+                             std::string_view model_binding, std::uint64_t max_total_bytes) {
+    return impl_->export_continuation(continuation, model_binding, max_total_bytes);
+}
+
 ReleaseResult Program::release_continuation(ContinuationHandle&& continuation) noexcept {
     return impl_->release_continuation(std::move(continuation));
 }

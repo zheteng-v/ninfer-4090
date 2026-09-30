@@ -132,6 +132,11 @@ void test_state_store(ninfer::DeviceContext& device) {
     expect(host_source.has_value(), "Host state source allocation");
     device.synchronize();
     images.freeze(*host_source);
+    std::vector<std::byte> device_export(layout.host.image_bytes, std::byte{0x7f});
+    images.copy_checkpoint_to_host(*host_source, device_export, device.stream);
+    device.synchronize();
+    expect(images.residency(*host_source) == store::StateReplicaResidency::DeviceOnly,
+           "State export does not allocate or publish a Host replica");
     auto d2h = images.begin_device_to_host(*host_source, device.transfer_stream);
     expect(d2h.has_value() &&
                images.residency(*host_source) == store::StateReplicaResidency::DeviceOnly,
@@ -140,6 +145,10 @@ void test_state_store(ninfer::DeviceContext& device) {
     images.publish_transfer(std::move(*d2h), true);
     expect(images.residency(*host_source) == store::StateReplicaResidency::Both,
            "State D2H backup publishes stable Both residency");
+    std::vector<std::byte> host_export(layout.host.image_bytes, std::byte{0x3c});
+    images.copy_checkpoint_to_host(*host_source, host_export, device.stream);
+    expect(host_export == device_export,
+           "State export yields the same canonical payload from Host and Device replicas");
 
     const auto moved_device = images.reserve_logical_destination();
     expect(moved_device.has_value(), "State replica split destination allocation");
@@ -147,6 +156,11 @@ void test_state_store(ninfer::DeviceContext& device) {
     expect(images.residency(*host_source) == store::StateReplicaResidency::HostOnly &&
                images.residency(*moved_device) == store::StateReplicaResidency::DeviceOnly,
            "State replica identity split keeps old Host content and moves Device ownership");
+    std::vector<std::byte> host_only_export(layout.host.image_bytes, std::byte{0x1a});
+    images.copy_checkpoint_to_host(*host_source, host_only_export, device.stream);
+    expect(host_only_export == device_export &&
+               images.residency(*host_source) == store::StateReplicaResidency::HostOnly,
+           "State export reads a Host-only immutable checkpoint without changing residency");
 
     const auto fork_one = images.reserve_logical_destination();
     const auto fork_two = images.reserve_logical_destination();

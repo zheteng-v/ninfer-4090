@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -929,6 +930,11 @@ public:
     [[nodiscard]] DiscardResult abort_pending(PendingBatch&& pending) noexcept;
     [[nodiscard]] FinishResult finish(SequenceHandle sequence) noexcept;
     [[nodiscard]] AbortResult abort(SequenceHandle sequence) noexcept;
+    // Export a stable, catalogued continuation into the validated session image format. This is a
+    // read-only physical operation and rejects concurrent Program transactions.
+    [[nodiscard]] std::vector<std::uint8_t>
+    export_continuation(const ContinuationHandle& continuation, std::string_view model_binding,
+                        std::uint64_t max_total_bytes);
     [[nodiscard]] ReleaseResult release_continuation(ContinuationHandle&& continuation) noexcept;
     [[nodiscard]] ReleaseResult release_shared_prefix(SharedPrefixHandle&& shared) noexcept;
     void fail_all_cleanup() noexcept;

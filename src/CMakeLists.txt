@@ -409,6 +409,7 @@ add_library(ninfer_model_runtime STATIC
   models/qwen3_5/program/planning/graph_profiles.cpp
   models/qwen3_5/program/program.cpp
   models/qwen3_5/program/program_impl.cpp
+  models/qwen3_5/program/session_export.cpp
   models/qwen3_5/program/context_work.cpp
   models/qwen3_5/program/planning/pressure.cpp
   models/qwen3_5/program/planning/checkpoint_recovery.cpp

@@ -2,9 +2,11 @@
 
 #include "models/qwen3_5/state/state_image.h"
 
+#include <cstring>
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -233,6 +235,48 @@ public:
             throw std::logic_error("StateImage has no published Device replica");
         }
         return *object.device_slot;
+    }
+
+    // Read an immutable checkpoint into caller-owned Host storage without allocating a replica or
+    // changing logical placement. Device copies are asynchronous on `stream`; the caller owns the
+    // synchronization boundary for the complete exported image.
+    void copy_checkpoint_to_host(StateImageHandle handle, std::span<std::byte> destination,
+                                 cudaStream_t stream = nullptr) const {
+        const Object& object = require(handle);
+        if (object.role != StateImageRole::CheckpointImmutable || destination.data() == nullptr ||
+            destination.size() != device_->host_layout().image_bytes ||
+            object.destination_pinned || has_pending_replica(object)) {
+            throw std::logic_error("StateImage checkpoint is not exportable");
+        }
+        std::memset(destination.data(), 0, destination.size());
+        if (object.host_slot) {
+            if (host_ == nullptr) {
+                throw std::logic_error("StateImage Host replica has no backing store");
+            }
+            const qwen3_5::HostStateImageConstView source = host_->view(*object.host_slot);
+            if (source.layout == nullptr || source.data == nullptr ||
+                source.layout->image_bytes != destination.size()) {
+                throw std::logic_error("StateImage Host replica layout is inconsistent");
+            }
+            const qwen3_5::StateImageHostLayout& layout = device_->host_layout();
+            const auto copy_region = [&](const LayoutRegion& region) {
+                std::memcpy(destination.data() + region.offset, source.data + region.offset,
+                            region.bytes);
+            };
+            copy_region(layout.linear_conv);
+            copy_region(layout.linear_recurrent);
+            copy_region(layout.continuation_hidden);
+            if (layout.dflash_local_k) { copy_region(*layout.dflash_local_k); }
+            if (layout.dflash_local_v) { copy_region(*layout.dflash_local_v); }
+            return;
+        }
+        if (!object.device_slot) {
+            throw std::logic_error("StateImage checkpoint has no readable replica");
+        }
+        device_->copy_to_host(*object.device_slot,
+                              qwen3_5::HostStateImageView{.data   = destination.data(),
+                                                         .layout = &device_->host_layout()},
+                              stream);
     }
 
     void move_checkpoint_to_active(StateImageHandle handle) {

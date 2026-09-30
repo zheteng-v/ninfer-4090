@@ -540,6 +540,9 @@ public:
     [[nodiscard]] DiscardResult abort_pending(PendingBatch&& pending) noexcept;
     [[nodiscard]] FinishResult finish(SequenceHandle sequence) noexcept;
     [[nodiscard]] AbortResult abort(SequenceHandle sequence) noexcept;
+    [[nodiscard]] std::vector<std::uint8_t>
+    export_continuation(const ContinuationHandle& continuation, std::string_view model_binding,
+                        std::uint64_t max_total_bytes);
     [[nodiscard]] ReleaseResult release_continuation(ContinuationHandle&& continuation) noexcept;
     [[nodiscard]] ReleaseResult release_shared_prefix(SharedPrefixHandle&& shared) noexcept;
     void fail_all_cleanup() noexcept;
