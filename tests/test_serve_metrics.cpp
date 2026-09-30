@@ -47,9 +47,12 @@ int main() {
     int failures = 0;
 
     ServeMetrics metrics;
+    std::vector<ninfer::SlotState> slots(3);
+    slots[0].processing = true;
+    slots[1].retained   = true;
     // The four llamacpp counters flow straight from the Engine's live totals.
     ninfer::RuntimeStats live;
-    const auto empty = parse(metrics.render(1, live, 0));
+    const auto empty = parse(metrics.render(1, live, 0, slots));
     failures += check(empty.at("llamacpp:prompt_tokens_total") == 0.0, "starts at zero");
     const auto never = metrics.last_completed();
     failures += check(never.prompt_tokens == 0 && never.cached_tokens == 0,
@@ -60,10 +63,10 @@ int main() {
 
     // Admission reserves request lifetimes before preparation/submission. Metrics use that
     // authoritative count directly, including work not yet visible in an engine slot.
-    const auto busy = parse(metrics.render(1, live, 2));
+    const auto busy = parse(metrics.render(1, live, 2, slots));
     failures += check(busy.at("llamacpp:requests_processing") == 1.0, "one processing");
     failures += check(busy.at("llamacpp:requests_deferred") == 1.0, "one deferred");
-    const auto drained = parse(metrics.render(1, live, 0));
+    const auto drained = parse(metrics.render(1, live, 0, slots));
     failures += check(drained.at("llamacpp:requests_processing") == 0.0, "drained processing");
     failures += check(drained.at("llamacpp:requests_deferred") == 0.0, "drained deferred");
 
@@ -83,7 +86,11 @@ int main() {
     live.prefill_seconds_total   = 0.6;
     live.committed_decode_tokens = 300;
     live.decode_seconds_total    = 6.0;
-    const auto values = parse(metrics.render(1, live, 0));
+    metrics.record_slot_action(ninfer::serve::SlotMetricAction::Save, true);
+    metrics.record_slot_action(ninfer::serve::SlotMetricAction::Restore, true);
+    metrics.record_slot_action(ninfer::serve::SlotMetricAction::Erase, true);
+    metrics.record_slot_action(ninfer::serve::SlotMetricAction::Save, false);
+    const auto values = parse(metrics.render(1, live, 0, slots));
     failures += check(values.at("llamacpp:prompt_tokens_total") == 1300.0, "live prefill tokens");
     failures += check(values.at("llamacpp:prompt_seconds_total") == 0.6, "live prefill seconds");
     failures += check(values.at("llamacpp:tokens_predicted_total") == 300.0, "live decode tokens");
@@ -93,6 +100,14 @@ int main() {
     failures += check(values.at("ninfer:prefix_cache_hit_tokens_total") == 900.0, "cache hits");
     failures += check(values.at("ninfer:draft_tokens_total") == 450.0, "draft tokens");
     failures += check(values.at("ninfer:draft_accepted_tokens_total") == 225.0, "accepted tokens");
+    failures += check(values.at("ninfer:slots_total") == 3.0, "slot count");
+    failures += check(values.at("ninfer:slots_processing") == 1.0, "processing slots");
+    failures += check(values.at("ninfer:slots_retained") == 1.0, "retained slots");
+    failures += check(values.at("ninfer:slot_save_total") == 1.0, "slot saves");
+    failures += check(values.at("ninfer:slot_restore_total") == 1.0, "slot restores");
+    failures += check(values.at("ninfer:slot_erase_total") == 1.0, "slot erases");
+    failures += check(values.at("ninfer:slot_operation_failures_total") == 1.0,
+                      "slot operation failures");
 
     // A cache hit reported larger than the prompt must clamp, not underflow.
     metrics.record(outcome(10, 50, 1, 0.0, 0.1, 0, 0));

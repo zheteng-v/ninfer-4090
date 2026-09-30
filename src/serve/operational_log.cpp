@@ -428,6 +428,38 @@ void OperationalLog::throughput(const ThroughputReport& report) const {
     write(render_throughput(report));
 }
 
+void OperationalLog::slot_saved(std::uint32_t slot, std::string_view filename,
+                                const ninfer::SlotSaveResult& result) const {
+    logger_->info("slot {} saved | file {} | {} tokens | {} bytes | {:.3f} ms | session {}", slot,
+                  product::format_pretty_text(filename), result.tokens, result.bytes,
+                  result.seconds * 1000.0, product::format_pretty_text(result.session_digest));
+}
+
+void OperationalLog::slot_restored(std::uint32_t slot, std::string_view filename,
+                                   const ninfer::SlotRestoreResult& result) const {
+    logger_->info("slot {} restored | file {} | {} tokens | {} bytes | {:.3f} ms | session {}",
+                  slot, product::format_pretty_text(filename), result.tokens, result.bytes,
+                  result.seconds * 1000.0, product::format_pretty_text(result.session_digest));
+}
+
+void OperationalLog::slot_erased(std::uint32_t slot, std::uint32_t tokens) const {
+    logger_->info("slot {} erased | {} tokens", slot, tokens);
+}
+
+void OperationalLog::slot_auto_save(const ninfer::SlotAutoSaveEvent& event) const {
+    if (!event.error.empty()) {
+        logger_->warn("slot auto-save failed | file {} | {}", product::format_pretty_text(event.path),
+                      product::format_pretty_text(event.error));
+    } else if (event.skipped_behind_tokens) {
+        logger_->info("slot auto-save skipped | file {} | spill {} tokens | file {} tokens",
+                      product::format_pretty_text(event.path), event.tokens,
+                      *event.skipped_behind_tokens);
+    } else {
+        logger_->info("slot auto-saved | file {} | {} tokens | {} bytes",
+                      product::format_pretty_text(event.path), event.tokens, event.bytes);
+    }
+}
+
 void OperationalLog::http_failure(std::string_view endpoint, const RequestFailure& failure,
                                   std::string_view request_id) const {
     std::ostringstream out;

@@ -222,6 +222,12 @@ ninfer_add_test(ninfer_serve_options_test
 ninfer_add_test(ninfer_serve_metrics_test
   SOURCES test_serve_metrics.cpp
   LIBRARIES ninfer_serve)
+ninfer_add_test(ninfer_slot_files_test
+  SOURCES test_slot_files.cpp
+  LIBRARIES ninfer_serve)
+ninfer_add_test(ninfer_slot_api_test
+  SOURCES test_slot_api.cpp
+  LIBRARIES ninfer_serve)
 ninfer_add_test(ninfer_request_log_test
   SOURCES test_request_log.cpp
   LIBRARIES ninfer_serve)

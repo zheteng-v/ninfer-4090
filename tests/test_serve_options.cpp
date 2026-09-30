@@ -35,6 +35,8 @@ int main() {
     failures += check(!defaults.enable_vision, "Vision is not disabled by default");
     failures += check(defaults.request_log_jsonl.empty(),
                       "request JSONL logging is not disabled by default");
+    failures += check(defaults.slot_save_path.empty() && !defaults.auto_save_evicted,
+                      "slot persistence is unexpectedly enabled by default");
     failures += check(defaults.context_cost_presets.empty(),
                       "external context-cost presets are unexpectedly configured by default");
     failures += check(defaults.log_stats_interval_ms == 5000,
@@ -92,6 +94,19 @@ int main() {
         parse({"ninfer-serve", "model.ninfer", "--context-cost-presets", "local-costs.json"});
     failures += check(context_cost.context_cost_presets == "local-costs.json",
                       "--context-cost-presets did not preserve its path");
+
+    const ServeOptions slot_persistence =
+        parse({"ninfer-serve", "model.ninfer", "--slot-save-path", "/tmp/ninfer-slots",
+               "--auto-save-evicted"});
+    failures += check(slot_persistence.slot_save_path == "/tmp/ninfer-slots" &&
+                          slot_persistence.auto_save_evicted,
+                      "slot persistence options did not reach serving options");
+    bool unbound_auto_save_rejected = false;
+    try {
+        (void)parse({"ninfer-serve", "model.ninfer", "--auto-save-evicted"});
+    } catch (const std::invalid_argument&) { unbound_auto_save_rejected = true; }
+    failures += check(unbound_auto_save_rejected,
+                      "--auto-save-evicted was accepted without --slot-save-path");
 
     const ServeOptions thinking_budget =
         parse({"ninfer-serve", "model.ninfer", "--default-thinking-budget", "37"});

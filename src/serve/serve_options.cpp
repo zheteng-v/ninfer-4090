@@ -76,7 +76,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--device-state-slots N] [--host-state-slots N] [--host-kv-mib N] "
            "[--max-private-continuations N] [--max-shared-prefixes N] "
            "[--max-long-anchors-per-continuation N] "
-           "[--request-log-jsonl FILE] "
+           "[--request-log-jsonl FILE] [--slot-save-path DIR] [--auto-save-evicted] "
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype bf16|int8|fp8|nvfp4|k8v4] [--spec mtp|dflash|dflash2 --draft-tokens N] "
            "[--default-max-tokens N] [--default-thinking-budget N] "
@@ -95,6 +95,8 @@ std::string serve_usage_text(const char* argv0) {
            "       --media-live-mib defaults to 2048 and bounds all live BF16 patch payloads\n"
            "       --media-preprocess-threads defaults to 0 (auto, at most 16 workers)\n"
            "       --request-log-jsonl appends full-precision server/request records\n"
+           "       --slot-save-path enables POST /slots/{id}?action=save|restore|erase\n"
+           "       --auto-save-evicted updates a bound slot file before involuntary eviction\n"
            "       --model-id overrides the artifact metadata.name reported by the server\n"
            "       Responses state is process-local and bounded to 1024 records / 256 MiB by "
            "default\n"
@@ -244,6 +246,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             if (options.request_log_jsonl.empty()) {
                 throw std::invalid_argument("--request-log-jsonl must not be empty");
             }
+        } else if (arg == "--slot-save-path") {
+            options.slot_save_path = require_value("--slot-save-path");
+            if (options.slot_save_path.empty()) {
+                throw std::invalid_argument("--slot-save-path must not be empty");
+            }
+        } else if (arg == "--auto-save-evicted") {
+            options.auto_save_evicted = true;
         } else if (arg == "--response-store-max-records") {
             const int records = parse_nonnegative_int(require_value("--response-store-max-records"),
                                                       "response-store-max-records");
@@ -326,6 +335,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (!kv_capacity_explicit) {
         options.kv_capacity = KvCapacityPolicy::explicit_capacity(options.max_context);
+    }
+    if (options.auto_save_evicted && options.slot_save_path.empty()) {
+        throw std::invalid_argument("--auto-save-evicted requires --slot-save-path");
     }
     if (!options.allow_prefix_reuse) {
         if (context_capacity_explicit) {

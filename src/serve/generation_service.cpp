@@ -230,7 +230,9 @@ private:
 
 } // namespace
 
-GenerationService::GenerationService(ServeOptions options, StartupObserver startup_observer)
+GenerationService::GenerationService(
+    ServeOptions options, StartupObserver startup_observer,
+    std::function<void(const ninfer::SlotAutoSaveEvent&)> auto_save_listener)
     : options_(std::move(options)) {
     ninfer::EngineOptions engine_options;
     engine_options.artifact_path            = options_.artifact_path;
@@ -242,6 +244,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.max_pending_requests     = options_.max_pending_requests;
     engine_options.pending_timeout_ms       = options_.pending_timeout_ms;
     engine_options.prefill_chunk            = options_.prefill_chunk;
+    engine_options.auto_save_evicted        = options_.auto_save_evicted;
+    if (options_.auto_save_evicted) {
+        engine_options.auto_save_listener = std::move(auto_save_listener);
+    }
     engine_options.kv_cache                 = options_.kv_cache;
     engine_options.enable_vision            = options_.enable_vision;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;

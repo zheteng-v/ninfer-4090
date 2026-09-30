@@ -49,6 +49,8 @@ int main() {
     options.api_key                        = "must-not-appear";
     options.model_id_override              = "deployment-alias";
     options.request_log_jsonl              = "requests.jsonl";
+    options.slot_save_path                 = "/sessions";
+    options.auto_save_evicted              = true;
     options.max_context                    = 262144;
     options.kv_capacity                    = ninfer::KvCapacityPolicy::explicit_capacity(524288);
     options.prefill_chunk                  = 1024;
@@ -72,6 +74,7 @@ int main() {
     engine_options.max_pending_requests                            = options.max_pending_requests;
     engine_options.pending_timeout_ms                              = options.pending_timeout_ms;
     engine_options.prefill_chunk                                   = options.prefill_chunk;
+    engine_options.auto_save_evicted                               = options.auto_save_evicted;
     engine_options.kv_cache                                        = options.kv_cache;
     engine_options.speculative                                     = options.speculative;
     engine_options.enable_vision                                   = options.enable_vision;
@@ -177,6 +180,9 @@ int main() {
         check(server.at("engine").at("log_stats_interval_ms") == 2500, "stats interval missing");
     failures += check(server.at("server").at("request_log_jsonl") == "requests.jsonl",
                       "request log path missing");
+    failures += check(server.at("server").at("slot_save_path") == "/sessions" &&
+                          server.at("engine").at("auto_save_evicted") == true,
+                      "slot persistence startup state missing");
     failures += check(server.at("server").at("default_thinking_budget") == 512,
                       "server thinking budget missing");
     failures += check(server.at("engine").at("kv_cache") == "fp8-e4m3-row256", "KV type missing");

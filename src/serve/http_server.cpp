@@ -4,11 +4,14 @@
 #include "serve/http_transport.h"
 #include "serve/openai_common.h"
 #include "serve/request_log.h"
+#include "serve/slot_api.h"
+#include "serve/slot_files.h"
 
 #include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <exception>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -433,11 +436,29 @@ void HttpServer::register_routes() {
                         "application/json");
     });
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
+        const std::vector<ninfer::SlotState> slots =
+            service_ != nullptr ? service_->slot_states() : std::vector<ninfer::SlotState>{};
         res.set_content(metrics_.render(options_.max_concurrency,
                                         service_ != nullptr ? service_->runtime_stats()
                                                             : ninfer::RuntimeStats{},
-                                        service_ != nullptr ? service_->active_request_count() : 0),
+                                        service_ != nullptr ? service_->active_request_count() : 0,
+                                        slots),
                         "text/plain; version=0.0.4");
+    });
+    server_.Get("/slots", [this](const httplib::Request&, httplib::Response& res) {
+        std::vector<ninfer::SlotState> states;
+        std::uint32_t slot_count = options_.max_concurrency;
+        if (service_ != nullptr) {
+            states     = service_->slot_states();
+            slot_count = static_cast<std::uint32_t>(states.size());
+        }
+        res.set_content(make_slots_body(
+                            states, slot_count, options_.max_context,
+                            options_.speculative.backend != ninfer::SpeculativeBackend::None),
+                        "application/json");
+    });
+    server_.Post(R"(/slots/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
+        handle_slot_action(req, res);
     });
     server_.Get("/v1/models", [this](const httplib::Request& req, httplib::Response& res) {
         handle_models(req, res);
@@ -505,6 +526,129 @@ void HttpServer::handle_model(const httplib::Request& req, httplib::Response& re
     res.set_content(make_model_object(public_model_id_, unix_time_now(), options_.max_context,
                                       options_.enable_vision),
                     "application/json");
+}
+
+void HttpServer::handle_slot_action(const httplib::Request& req, httplib::Response& res) {
+    const auto fail = [&res](SlotApiFailure failure, std::string message,
+                             std::string_view action = {}) {
+        write_openai_error(res, make_slot_api_error(failure, std::move(message), action));
+    };
+    if (options_.slot_save_path.empty()) {
+        fail(SlotApiFailure::PersistenceDisabled,
+             "this server was started without --slot-save-path; slot persistence is disabled");
+        return;
+    }
+    if (service_ == nullptr) {
+        fail(SlotApiFailure::ServiceUnavailable, "inference service is not attached");
+        return;
+    }
+
+    const std::string id_text = req.matches.size() > 1 ? req.matches[1].str() : std::string();
+    std::uint32_t slot        = 0;
+    try {
+        std::size_t parsed = 0;
+        const unsigned long long value = std::stoull(id_text, &parsed);
+        if (parsed != id_text.size() || value > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::out_of_range("slot id");
+        }
+        slot = static_cast<std::uint32_t>(value);
+    } catch (const std::exception&) {
+        fail(SlotApiFailure::InvalidSlot, "slot id is not a valid unsigned integer");
+        return;
+    }
+    const std::uint32_t slot_count = service_->slot_count();
+    if (slot >= slot_count) {
+        fail(SlotApiFailure::InvalidSlot,
+             "slot " + id_text + " is outside this server's " + std::to_string(slot_count) +
+                 " slots");
+        return;
+    }
+
+    const std::string action = req.get_param_value("action");
+    const bool is_save       = action == "save";
+    const bool is_restore    = action == "restore";
+    const bool is_erase      = action == "erase";
+    if (!is_save && !is_restore && !is_erase) {
+        fail(SlotApiFailure::InvalidAction, "action must be save, restore, or erase");
+        return;
+    }
+    const SlotMetricAction metric_action =
+        is_save ? SlotMetricAction::Save
+                : (is_restore ? SlotMetricAction::Restore : SlotMetricAction::Erase);
+
+    std::string filename;
+    std::string expected_digest;
+    try {
+        const nlohmann::json body =
+            req.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(req.body);
+        filename        = body.value("filename", std::string());
+        expected_digest = body.value("if_digest", std::string());
+    } catch (const std::exception&) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::InvalidRequest, "request body is not valid slot-operation JSON");
+        return;
+    }
+
+    try {
+        if (is_erase) {
+            const std::uint32_t erased = service_->slot_erase(slot, expected_digest);
+            metrics_.record_slot_action(metric_action, true);
+            operational_log_.slot_erased(slot, erased);
+            res.set_content(nlohmann::json{{"id_slot", slot}, {"n_erased", erased}}.dump(),
+                            "application/json");
+            return;
+        }
+
+        const std::optional<std::string> sanitized = sanitize_slot_filename(filename);
+        if (!sanitized) {
+            metrics_.record_slot_action(metric_action, false);
+            fail(SlotApiFailure::InvalidFilename,
+                 "filename must be 1-" + std::to_string(kSlotFilenameMaxBytes) +
+                     " characters of [A-Za-z0-9._-] and must not start with a dot");
+            return;
+        }
+        const std::string path = (options_.slot_save_path / *sanitized).string();
+        if (is_save) {
+            const ninfer::SlotSaveResult saved =
+                service_->slot_save(slot, path, expected_digest);
+            metrics_.record_slot_action(metric_action, true);
+            operational_log_.slot_saved(slot, *sanitized, saved);
+            res.set_content(
+                nlohmann::json{{"id_slot", slot},
+                               {"filename", *sanitized},
+                               {"n_saved", saved.tokens},
+                               {"n_written", saved.bytes},
+                               {"session_digest", saved.session_digest},
+                               {"timings", {{"save_ms", saved.seconds * 1000.0}}}}
+                    .dump(),
+                "application/json");
+        } else {
+            const ninfer::SlotRestoreResult restored = service_->slot_restore(slot, path);
+            metrics_.record_slot_action(metric_action, true);
+            operational_log_.slot_restored(slot, *sanitized, restored);
+            res.set_content(
+                nlohmann::json{{"id_slot", slot},
+                               {"filename", *sanitized},
+                               {"n_restored", restored.tokens},
+                               {"n_read", restored.bytes},
+                               {"session_digest", restored.session_digest},
+                               {"timings", {{"restore_ms", restored.seconds * 1000.0}}}}
+                    .dump(),
+                "application/json");
+        }
+    } catch (const ninfer::RequestError& error) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::Busy, error.what());
+    } catch (const ninfer::SlotSessionMismatch& error) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::SessionMismatch, error.what());
+    } catch (const std::invalid_argument& error) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::OperationFailed, error.what(), action);
+    } catch (...) {
+        metrics_.record_slot_action(metric_action, false);
+        throw;
+    }
 }
 
 bool HttpServer::bind() { return server_.bind_to_port(options_.host, options_.port); }

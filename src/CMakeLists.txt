@@ -503,6 +503,7 @@ if(NINFER_BUILD_SERVE)
     serve/operational_log.cpp
     serve/request_log.cpp
     serve/http_server.cpp
+    serve/slot_api.cpp
     serve/openai_responses_http.cpp
     serve/serve_metrics.cpp
     serve/serve_options.cpp)

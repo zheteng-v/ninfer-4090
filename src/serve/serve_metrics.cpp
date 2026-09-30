@@ -37,6 +37,25 @@ void ServeMetrics::record(const GenerationOutcome& outcome) {
     last_completed_.cached_tokens = static_cast<int>(std::min(cached, prompt));
 }
 
+void ServeMetrics::record_slot_action(SlotMetricAction action, bool success) {
+    const std::lock_guard lock(mutex_);
+    if (!success) {
+        ++slot_operation_failures_total_;
+        return;
+    }
+    switch (action) {
+    case SlotMetricAction::Save:
+        ++slot_save_total_;
+        break;
+    case SlotMetricAction::Restore:
+        ++slot_restore_total_;
+        break;
+    case SlotMetricAction::Erase:
+        ++slot_erase_total_;
+        break;
+    }
+}
+
 ServeMetrics::LastCompleted ServeMetrics::last_completed() const {
     const std::lock_guard lock(mutex_);
     return last_completed_;
@@ -44,7 +63,8 @@ ServeMetrics::LastCompleted ServeMetrics::last_completed() const {
 
 std::string ServeMetrics::render(std::uint32_t max_concurrency,
                                  const ninfer::RuntimeStats& live,
-                                 std::size_t active_requests) const {
+                                 std::size_t active_requests,
+                                 const std::vector<ninfer::SlotState>& slots) const {
     const std::lock_guard lock(mutex_);
     const std::uint64_t in_flight  = active_requests;
     const std::uint64_t processing = std::min<std::uint64_t>(in_flight, max_concurrency);
@@ -60,6 +80,22 @@ std::string ServeMetrics::render(std::uint32_t max_concurrency,
     append_counter(out, "ninfer:prefix_cache_hit_tokens_total", prefix_cache_hit_tokens_total_);
     append_counter(out, "ninfer:draft_tokens_total", speculative_draft_tokens_total_);
     append_counter(out, "ninfer:draft_accepted_tokens_total", speculative_accepted_tokens_total_);
+    append_counter(out, "ninfer:slots_total", slots.size());
+    append_counter(out, "ninfer:slots_processing",
+                   static_cast<std::uint64_t>(std::count_if(
+                       slots.begin(), slots.end(), [](const ninfer::SlotState& slot) {
+                           return slot.processing;
+                       })));
+    append_counter(out, "ninfer:slots_retained",
+                   static_cast<std::uint64_t>(std::count_if(
+                       slots.begin(), slots.end(), [](const ninfer::SlotState& slot) {
+                           return slot.retained;
+                       })));
+    append_counter(out, "ninfer:slot_save_total", slot_save_total_);
+    append_counter(out, "ninfer:slot_restore_total", slot_restore_total_);
+    append_counter(out, "ninfer:slot_erase_total", slot_erase_total_);
+    append_counter(out, "ninfer:slot_operation_failures_total",
+                   slot_operation_failures_total_);
     return out;
 }
 

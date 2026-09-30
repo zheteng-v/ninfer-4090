@@ -10,6 +10,7 @@
 #include <chrono>
 #include <csignal>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -53,6 +54,17 @@ int main(int argc, char** argv) {
     ninfer::serve::OperationalLog operational_log(logger);
     bool serving = false;
 
+    if (!options.slot_save_path.empty()) {
+        std::error_code directory_error;
+        std::filesystem::create_directories(options.slot_save_path, directory_error);
+        if (directory_error ||
+            !std::filesystem::is_directory(options.slot_save_path, directory_error)) {
+            logger->error("--slot-save-path is not a usable directory: {}",
+                          options.slot_save_path.string());
+            return 1;
+        }
+    }
+
     try {
         ninfer::serve::HttpServer server(options, logger);
         if (!server.bind()) {
@@ -60,7 +72,11 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        ninfer::serve::GenerationService service(options, startup_log.observer());
+        ninfer::serve::GenerationService service(
+            options, startup_log.observer(),
+            [&operational_log](const ninfer::SlotAutoSaveEvent& event) {
+                operational_log.slot_auto_save(event);
+            });
         startup_log.engine_ready(service.load_summary());
         operational_log.engine_capacity(service);
 

@@ -314,24 +314,24 @@ GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
   server without changes. Processing/deferred occupancy is reserved before prompt preparation
   or engine submission and held through response release, so accepted work cannot disappear from
   metrics while queued. Prompt tokens count only computed prefill; prefix-cache hits are excluded,
-  as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache hits, and MTP
-  draft/acceptance totals.
-- **`GET /slots`.** A llama.cpp-shaped slot table read from the engine's real lane state: busy
-  slots report their request's prompt and reused-prefix sizes, idle retained slots report the
+  as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache hits,
+  speculative draft/acceptance totals, live slot occupancy, and slot-operation outcomes.
+- **`GET /slots`.** A llama.cpp-shaped slot table read from the engine's private-continuation
+  catalog: busy slots report their request's prompt and reused-prefix sizes, retained slots report the
   resident session's depth and its identifying `session_digest`. Truthful per-slot attribution
   holds at any `--max-concurrency`.
 - **Slot session save/restore.** `--slot-save-path DIR` (off by default) enables llama.cpp-style
   `POST /slots/{id}?action=save|restore|erase`: one idle slot's complete resident session -
-  paged Text and MTP KV, GDN linear-attention state, rewrite checkpoint, long anchors, and
+  paged Text and speculative-backend KV, GDN linear-attention state, retained checkpoints, and
   prefix identity - moves to or from disk, and a restored slot reuses the cache across server
   restarts instead of re-prefilling (a 6.9k-token session restores in about 0.1 s against a
   multi-second reprefill).
-  Sessions are identified by a stable `session_digest`; chat completions carry `id_slot` and the
-  digest next to `timings`, and `save`/`erase` accept an `if_digest` precondition checked
+  Sessions are identified by a stable `session_digest`; `/slots`, save, and restore publish it,
+  and `save`/`erase` accept an `if_digest` precondition checked
   atomically, so a client always persists exactly the session it means. A restored session is
-  reusable from its endpoint, its rewrite checkpoint, or any retained long anchor; the GDN
-  state cannot rewind below the deepest retained checkpoint, and the DFlash backend is not
-  supported. Details in [docs/serving.md](docs/serving.md).
+  reusable from its endpoint or a retained checkpoint. Images bind to the exact artifact,
+  runtime layout, KV geometry, and speculative backend. Details in
+  [docs/serving.md](docs/serving.md).
 - **Reuse-aware lane choice.** When prefix reuse ties (typically zero for a fresh session),
   admission picks the lane whose occupation costs least to replace - an empty lane before any
   retained session, then the shallowest - so a burst request no longer evicts a deep resident
