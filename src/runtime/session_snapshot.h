@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +29,12 @@ struct SessionSnapshotView {
     std::vector<SessionSnapshotSectionView> sections;
 
     [[nodiscard]] const SessionSnapshotSectionView* find_section(std::uint32_t type) const noexcept;
+};
+
+struct RetainedSessionSnapshot {
+    std::vector<std::uint8_t> bytes;
+    std::uint32_t tokens = 0;
+    std::string session_digest;
 };
 
 // Encodes a deterministic, little-endian container. Checksums detect accidental corruption; they

@@ -207,7 +207,7 @@ int main() {
                    ninfer::runtime::kDefaultSessionSnapshotLimit);
            }),
            "runtime-layout mismatch was accepted");
-    expect(throws<std::runtime_error>([&] {
+    expect(throws<std::invalid_argument>([&] {
                (void)detail::decode_continuation_session_image(
                    bytes, "another-model", source.runtime, 262144,
                    ninfer::runtime::kDefaultSessionSnapshotLimit);

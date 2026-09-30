@@ -65,7 +65,7 @@ int main() {
 
     auto corrupt_payload = image;
     corrupt_payload.back() ^= 0x01;
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(corrupt_payload,
                                                         "qwen3.5-27b-v3:sm89");
                       }),
@@ -73,16 +73,16 @@ int main() {
 
     auto corrupt_header = image;
     corrupt_header[72] = 1;
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(corrupt_header,
                                                         "qwen3.5-27b-v3:sm89");
                       }),
                       "reserved header corruption was accepted");
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(image, "another-model");
                       }),
                       "wrong model binding was accepted");
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(
                               std::span<const std::uint8_t>(image).first(image.size() - 1),
                               "qwen3.5-27b-v3:sm89");
@@ -90,7 +90,7 @@ int main() {
                       "truncated snapshot was accepted");
     auto trailing = image;
     trailing.push_back(0);
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(trailing, "qwen3.5-27b-v3:sm89");
                       }),
                       "snapshot with trailing data was accepted");
@@ -118,7 +118,7 @@ int main() {
                                                         image.size() - 1);
                       }),
                       "encode size limit was not enforced");
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(image, "qwen3.5-27b-v3:sm89",
                                                         image.size() - 1);
                       }),
@@ -127,7 +127,7 @@ int main() {
     std::vector<std::uint8_t> legacy(80, 0);
     const std::array<std::uint8_t, 8> legacy_magic{'N', 'I', 'N', 'F', 'S', 'E', 'S', '1'};
     std::copy(legacy_magic.begin(), legacy_magic.end(), legacy.begin());
-    failures += check(throws<std::runtime_error>([&] {
+    failures += check(throws<std::invalid_argument>([&] {
                           (void)decode_session_snapshot(legacy);
                       }),
                       "legacy snapshot magic was accepted");

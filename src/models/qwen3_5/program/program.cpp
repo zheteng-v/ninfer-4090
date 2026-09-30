@@ -461,6 +461,25 @@ Program::import_continuation(std::span<const std::uint8_t> bytes,
     return impl_->import_continuation(bytes, expected_model_binding, max_total_bytes);
 }
 
+std::uint32_t
+Program::continuation_depth(const ContinuationHandle& continuation) const noexcept {
+    return impl_->continuation_depth(continuation);
+}
+
+std::string Program::continuation_digest(const ContinuationHandle& continuation) const {
+    return impl_->continuation_digest(continuation);
+}
+
+std::vector<SlotCheckpoint>
+Program::continuation_checkpoints(const ContinuationHandle& continuation) const {
+    return impl_->continuation_checkpoints(continuation);
+}
+
+ContinuationSummary
+Program::continuation_summary(const ContinuationHandle& continuation) const {
+    return impl_->continuation_summary(continuation);
+}
+
 ReleaseResult Program::release_continuation(ContinuationHandle&& continuation) noexcept {
     return impl_->release_continuation(std::move(continuation));
 }

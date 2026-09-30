@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <limits>
@@ -19,6 +20,20 @@
 
 namespace ninfer::models::qwen3_5::detail {
 namespace {
+
+std::string ledger_prefix_digest(std::span<const TokenId> ledger) {
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (const TokenId token : ledger) {
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(&token);
+        for (std::size_t index = 0; index < sizeof(token); ++index) {
+            hash = (hash ^ bytes[index]) * 1099511628211ULL;
+        }
+    }
+    char encoded[17]{};
+    (void)std::snprintf(encoded, sizeof(encoded), "%016llx",
+                        static_cast<unsigned long long>(hash));
+    return encoded;
+}
 
 std::size_t checked_payload_size(std::uint32_t count, std::size_t item_bytes,
                                  std::uint64_t max_total_bytes, const char* label) {
@@ -182,6 +197,57 @@ copy_kv_image(const KVAddressSpaceStore& addresses, const LogicalKVPageStore& pa
 }
 
 } // namespace
+
+std::uint32_t
+ProgramImpl::continuation_depth(const ContinuationHandle& continuation) const noexcept {
+    if (!valid_continuation(continuation)) { return 0; }
+    return static_cast<std::uint32_t>(
+        continuation_states[ContractAccess::index(continuation)].ledger.size());
+}
+
+std::string ProgramImpl::continuation_digest(const ContinuationHandle& continuation) const {
+    if (!valid_continuation(continuation)) { return {}; }
+    const SequenceState& sequence = continuation_states[ContractAccess::index(continuation)];
+    return ledger_prefix_digest(sequence.ledger);
+}
+
+std::vector<SlotCheckpoint>
+ProgramImpl::continuation_checkpoints(const ContinuationHandle& continuation) const {
+    if (!valid_continuation(continuation)) { return {}; }
+    const SequenceState& sequence = continuation_states[ContractAccess::index(continuation)];
+    const std::uint32_t depth     = static_cast<std::uint32_t>(sequence.ledger.size());
+    std::vector<std::uint32_t> frontiers;
+    frontiers.reserve(sequence.long_anchors.size() + 2U);
+    for (const LongAnchorCheckpoint& anchor : sequence.long_anchors) {
+        frontiers.push_back(anchor.frontier);
+    }
+    if (sequence.rewrite_checkpoint.valid) {
+        frontiers.push_back(sequence.rewrite_checkpoint.frontier);
+    }
+    if (sequence.endpoint_valid) { frontiers.push_back(sequence.execution_frontier); }
+    std::sort(frontiers.begin(), frontiers.end());
+    frontiers.erase(std::unique(frontiers.begin(), frontiers.end()), frontiers.end());
+
+    std::vector<SlotCheckpoint> checkpoints;
+    checkpoints.reserve(frontiers.size());
+    for (const std::uint32_t frontier : frontiers) {
+        if (frontier == 0 || frontier > depth) { continue; }
+        checkpoints.push_back(SlotCheckpoint{
+            .frontier = frontier,
+            .session_digest = ledger_prefix_digest(
+                std::span<const TokenId>(sequence.ledger.data(), frontier)),
+        });
+    }
+    return checkpoints;
+}
+
+qwen3_5::ContinuationSummary
+ProgramImpl::continuation_summary(const ContinuationHandle& continuation) const {
+    if (!valid_continuation(continuation)) {
+        throw std::invalid_argument("continuation holds no retained session");
+    }
+    return continuation_summary(continuation_states[ContractAccess::index(continuation)]);
+}
 
 std::vector<std::uint8_t>
 ProgramImpl::export_continuation(const ContinuationHandle& continuation,

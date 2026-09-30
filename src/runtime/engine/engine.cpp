@@ -8,9 +8,17 @@
 #include "runtime/engine/causal_score_core.h"
 #include "runtime/engine/engine_core.h"
 #include "runtime/engine/model_instance.h"
+#include "runtime/engine/slot_spill_guard.h"
+#include "runtime/session_file.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <limits>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -144,6 +152,22 @@ GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView
     return impl->wait(sink, cancellation);
 }
 
+namespace {
+
+std::string slot_model_binding(const runtime::ModelInstance& instance) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string binding = "ninfer-v3:";
+    binding.reserve(binding.size() + instance.model->info().artifact_id.size() * 2U);
+    for (const std::byte value : instance.model->info().artifact_id) {
+        const auto byte = std::to_integer<unsigned int>(value);
+        binding.push_back(hex[(byte >> 4U) & 0x0fU]);
+        binding.push_back(hex[byte & 0x0fU]);
+    }
+    return binding;
+}
+
+} // namespace
+
 class Engine::Impl {
 public:
     using GenerationCore = runtime::EngineCore<runtime::ModelInstance>;
@@ -166,12 +190,33 @@ public:
             core = std::make_unique<GenerationCore>(*active, device, options,
                                                     std::move(constructed.context_cost));
         }
+        if (options.auto_save_evicted) {
+            std::visit(
+                [&](auto& constructed_core) {
+                    if constexpr (requires {
+                                      constructed_core->set_eviction_sink(
+                                          std::string(),
+                                          std::function<void(
+                                              std::string,
+                                              runtime::RetainedSessionSnapshot&&)>());
+                                  }) {
+                        constructed_core->set_eviction_sink(
+                            slot_model_binding(*active),
+                            [this](std::string path,
+                                   runtime::RetainedSessionSnapshot&& snapshot) {
+                                enqueue_write(std::move(path), std::move(snapshot));
+                            });
+                    }
+                },
+                core);
+        }
         finalize_phase.complete();
     }
 
     ~Impl() noexcept {
         device.bind_to_current_thread_noexcept();
         core.emplace<std::monostate>();
+        stop_writer();
         try {
             device.synchronize();
         } catch (...) {}
@@ -183,6 +228,90 @@ public:
     LoadSummary load;
     ModelSamplingDefaults sampling_defaults;
     Core core;
+
+    struct PendingWrite {
+        std::string path;
+        runtime::RetainedSessionSnapshot snapshot;
+    };
+
+    void enqueue_write(std::string path, runtime::RetainedSessionSnapshot&& snapshot) {
+        std::unique_lock lock(writer_mutex);
+        if (!writer.joinable()) { writer = std::thread([this] { writer_loop(); }); }
+        pending_writes.push_back(PendingWrite{std::move(path), std::move(snapshot)});
+        lock.unlock();
+        writer_cv.notify_one();
+    }
+
+    void drain_writes() {
+        std::unique_lock lock(writer_mutex);
+        writer_cv.wait(lock, [this] { return pending_writes.empty() && !write_in_flight; });
+    }
+
+    std::mutex writer_mutex;
+    std::condition_variable writer_cv;
+    std::deque<PendingWrite> pending_writes;
+    bool write_in_flight = false;
+    bool writer_stop     = false;
+    std::thread writer;
+    std::mutex publish_mutex;
+    SlotSpillGuard spill_guard;
+
+private:
+    void writer_loop() {
+        std::unique_lock lock(writer_mutex);
+        while (true) {
+            writer_cv.wait(lock, [this] { return writer_stop || !pending_writes.empty(); });
+            if (pending_writes.empty()) { break; }
+            PendingWrite item = std::move(pending_writes.front());
+            pending_writes.pop_front();
+            write_in_flight = true;
+            lock.unlock();
+
+            SlotAutoSaveEvent event;
+            event.path   = item.path;
+            event.tokens = item.snapshot.tokens;
+            event.bytes  = item.snapshot.bytes.size();
+            const auto started = std::chrono::steady_clock::now();
+            try {
+                std::scoped_lock publish_lock(publish_mutex);
+                if (const std::optional<std::uint32_t> deeper =
+                        spill_guard.blocks(item.path, item.snapshot.tokens)) {
+                    event.skipped_behind_tokens = deeper;
+                } else {
+                    runtime::write_session_file_atomic(item.path, item.snapshot.bytes);
+                    spill_guard.note_spilled(item.path, item.snapshot.tokens);
+                }
+            } catch (const std::exception& error) {
+                event.error = error.what();
+            } catch (...) {
+                event.error = "unknown auto-save failure";
+            }
+            event.seconds =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            if (options.auto_save_listener) {
+                try {
+                    options.auto_save_listener(event);
+                } catch (...) {}
+            }
+
+            lock.lock();
+            write_in_flight = false;
+            writer_cv.notify_all();
+        }
+    }
+
+    void stop_writer() noexcept {
+        {
+            std::scoped_lock lock(writer_mutex);
+            writer_stop = true;
+        }
+        writer_cv.notify_all();
+        if (writer.joinable()) {
+            try {
+                writer.join();
+            } catch (...) {}
+        }
+    }
 };
 
 Engine::Engine(EngineOptions options) {
@@ -393,6 +522,94 @@ RuntimeStats Engine::runtime_stats() const {
                 throw std::logic_error("Engine core is unavailable");
             } else {
                 return core->runtime_stats();
+            }
+        },
+        impl_->core);
+}
+
+SlotSaveResult Engine::save_slot(std::uint32_t lane, const std::string& path,
+                                 const std::string& expected_digest) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const auto started = std::chrono::steady_clock::now();
+    impl_->drain_writes();
+    const std::string binding = slot_model_binding(*impl_->active);
+    runtime::RetainedSessionSnapshot snapshot = std::visit(
+        [&](auto& core) -> runtime::RetainedSessionSnapshot {
+            if constexpr (requires {
+                              core->save_retained_slot(lane, binding, expected_digest, path);
+                          }) {
+                return core->save_retained_slot(lane, binding, expected_digest, path);
+            } else {
+                throw std::logic_error("session persistence requires a generation Engine");
+            }
+        },
+        impl_->core);
+    {
+        std::scoped_lock publish_lock(impl_->publish_mutex);
+        runtime::write_session_file_atomic(path, snapshot.bytes);
+        impl_->spill_guard.note_authoritative(path, snapshot.tokens);
+    }
+    SlotSaveResult result;
+    result.tokens         = snapshot.tokens;
+    result.bytes          = snapshot.bytes.size();
+    result.session_digest = std::move(snapshot.session_digest);
+    result.seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return result;
+}
+
+SlotRestoreResult Engine::restore_slot(std::uint32_t lane, const std::string& path) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const auto started = std::chrono::steady_clock::now();
+    impl_->drain_writes();
+    std::scoped_lock publish_lock(impl_->publish_mutex);
+    std::vector<std::uint8_t> snapshot = runtime::read_session_file(path);
+    const std::string binding = slot_model_binding(*impl_->active);
+    auto restored = std::visit(
+        [&](auto& core) -> std::pair<std::uint32_t, std::string> {
+            if constexpr (requires {
+                              core->restore_retained_slot(
+                                  lane, std::span<const std::uint8_t>(snapshot), binding, path);
+                          }) {
+                return core->restore_retained_slot(
+                    lane, std::span<const std::uint8_t>(snapshot), binding, path);
+            } else {
+                throw std::logic_error("session persistence requires a generation Engine");
+            }
+        },
+        impl_->core);
+    impl_->spill_guard.note_authoritative(path, restored.first);
+    SlotRestoreResult result;
+    result.tokens         = restored.first;
+    result.bytes          = snapshot.size();
+    result.session_digest = std::move(restored.second);
+    result.seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return result;
+}
+
+std::uint32_t Engine::erase_slot(std::uint32_t lane, const std::string& expected_digest) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    impl_->drain_writes();
+    return std::visit(
+        [&](auto& core) -> std::uint32_t {
+            if constexpr (requires { core->erase_retained_slot(lane, expected_digest); }) {
+                return core->erase_retained_slot(lane, expected_digest);
+            } else {
+                throw std::logic_error("session persistence requires a generation Engine");
+            }
+        },
+        impl_->core);
+}
+
+std::vector<SlotState> Engine::slot_states() const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return std::visit(
+        [](const auto& core) -> std::vector<SlotState> {
+            if constexpr (requires { core->slot_states(); }) {
+                return core->slot_states();
+            } else {
+                throw std::logic_error("session persistence requires a generation Engine");
             }
         },
         impl_->core);

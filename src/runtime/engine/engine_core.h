@@ -11,6 +11,7 @@
 #include "runtime/engine/context_cache/resource_manager.h"
 #include "runtime/engine/scheduler.h"
 #include "runtime/engine/generation_budget.h"
+#include "runtime/session_snapshot.h"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +23,7 @@
 #include <deque>
 #include <exception>
 #include <future>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -29,6 +31,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -69,6 +72,7 @@ public:
           max_outstanding_(static_cast<std::size_t>(options.max_concurrency) +
                            options.max_pending_requests),
           pending_timeout_(std::chrono::milliseconds(options.pending_timeout_ms)),
+          context_cache_enabled_(options.context_cache.enabled),
           resources_(max_concurrency_, options.context_cache.max_private_continuations.value(),
                      options.context_cache.max_shared_prefixes.value(),
                      options.context_cache.enabled,
@@ -82,6 +86,15 @@ public:
             !options.context_cache.max_shared_prefixes) {
             throw std::logic_error("target admission capacity does not match the Engine");
         }
+        slot_session_paths_.resize(resources_.catalog_capacity());
+        slot_digest_cache_.resize(resources_.catalog_capacity());
+        resources_.set_eviction_observer(
+            [this](std::uint32_t slot,
+                   const typename ResourceManagement::ContinuationHandle& handle) {
+                spill_catalog_slot(slot, handle);
+            });
+        resources_.set_slot_release_observer(
+            [this](std::uint32_t slot) { clear_slot_session(slot); });
         std::promise<void> startup;
         std::future<void> started = startup.get_future();
         worker_                   = std::thread([this, startup = std::move(startup)]() mutable {
@@ -267,7 +280,191 @@ public:
         } catch (...) {}
     }
 
+    [[nodiscard]] RetainedSessionSnapshot
+    save_retained_slot(std::uint32_t slot, std::string_view model_binding,
+                       std::string_view expected_digest, std::string_view session_path = {}) {
+        std::scoped_lock lock(execution_mutex_);
+        require_settled_slot(slot);
+        const typename ResourceManagement::CatalogSlotView view = resources_.catalog_slot(slot);
+        if (view.state != ResourceManagement::CatalogState::Catalogued || view.handle == nullptr) {
+            throw std::invalid_argument("slot holds no retained session");
+        }
+        require_session_digest(view, expected_digest);
+        RetainedSessionSnapshot snapshot;
+        snapshot.bytes = instance_.program->export_continuation(
+            *view.handle, model_binding, kDefaultSessionSnapshotLimit);
+        snapshot.tokens         = instance_.program->continuation_depth(*view.handle);
+        snapshot.session_digest = instance_.program->continuation_digest(*view.handle);
+        bind_slot_session(slot, session_path);
+        return snapshot;
+    }
+
+    [[nodiscard]] std::pair<std::uint32_t, std::string>
+    restore_retained_slot(std::uint32_t slot, std::span<const std::uint8_t> snapshot,
+                          std::string_view model_binding, std::string_view session_path = {}) {
+        std::scoped_lock lock(execution_mutex_);
+        if (!context_cache_enabled_) {
+            throw std::invalid_argument("session restore requires the context cache to be enabled");
+        }
+        require_settled_slot(slot);
+        bool have_idle_lane = false;
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            have_idle_lane = have_idle_lane || slots_[lane] == nullptr;
+        }
+        if (!have_idle_lane || materializing_) {
+            throw RequestError(RequestErrorKind::Overloaded,
+                               "session restore requires an idle Engine lane");
+        }
+
+        const typename ResourceManagement::CatalogSlotView existing = resources_.catalog_slot(slot);
+        std::optional<RetainedSessionSnapshot> rollback;
+        std::string rollback_path;
+        if (existing.state == ResourceManagement::CatalogState::Catalogued &&
+            existing.handle != nullptr) {
+            rollback.emplace();
+            rollback->bytes = instance_.program->export_continuation(
+                *existing.handle, model_binding, kDefaultSessionSnapshotLimit);
+            rollback->tokens = instance_.program->continuation_depth(*existing.handle);
+            rollback->session_digest = instance_.program->continuation_digest(*existing.handle);
+            rollback_path = slot_session_paths_[slot];
+            auto displaced = resources_.take_catalogued(slot);
+            (void)instance_.program->release_continuation(std::move(displaced));
+        }
+        clear_slot_session(slot);
+
+        try {
+            auto restored = instance_.program->import_continuation(
+                snapshot, model_binding, kDefaultSessionSnapshotLimit);
+            const std::uint32_t tokens = instance_.program->continuation_depth(restored);
+            std::string digest         = instance_.program->continuation_digest(restored);
+            const auto summary         = instance_.program->continuation_summary(restored);
+            try {
+                resources_.adopt_restored(slot, std::move(restored), summary);
+            } catch (...) {
+                (void)instance_.program->release_continuation(std::move(restored));
+                throw;
+            }
+            bind_slot_session(slot, session_path);
+            publish_runtime_stats();
+            return {tokens, std::move(digest)};
+        } catch (...) {
+            const std::exception_ptr failure = std::current_exception();
+            if (rollback) {
+                try {
+                    auto restored = instance_.program->import_continuation(
+                        rollback->bytes, model_binding, kDefaultSessionSnapshotLimit);
+                    const auto summary = instance_.program->continuation_summary(restored);
+                    try {
+                        resources_.adopt_restored(slot, std::move(restored), summary);
+                    } catch (...) {
+                        (void)instance_.program->release_continuation(std::move(restored));
+                        throw;
+                    }
+                    bind_slot_session(slot, rollback_path);
+                    publish_runtime_stats();
+                } catch (...) {
+                    throw std::logic_error(
+                        "session restore failed and the resident session could not be rolled back");
+                }
+            }
+            std::rethrow_exception(failure);
+        }
+    }
+
+    std::uint32_t erase_retained_slot(std::uint32_t slot,
+                                      std::string_view expected_digest) {
+        std::scoped_lock lock(execution_mutex_);
+        require_settled_slot(slot);
+        const typename ResourceManagement::CatalogSlotView view = resources_.catalog_slot(slot);
+        require_session_digest(view, expected_digest);
+        clear_slot_session(slot);
+        if (view.state != ResourceManagement::CatalogState::Catalogued || view.handle == nullptr) {
+            return 0;
+        }
+        const std::uint32_t tokens = instance_.program->continuation_depth(*view.handle);
+        auto removed               = resources_.take_catalogued(slot);
+        (void)instance_.program->release_continuation(std::move(removed));
+        publish_runtime_stats();
+        return tokens;
+    }
+
+    [[nodiscard]] std::vector<SlotState> slot_states() const {
+        std::lock_guard lock(stats_mutex_);
+        std::vector<SlotState> states = published_slots_;
+        states.resize(resources_.catalog_capacity());
+        return states;
+    }
+
+    void set_eviction_sink(
+        std::string model_binding,
+        std::function<void(std::string, RetainedSessionSnapshot&&)> sink) {
+        std::scoped_lock lock(execution_mutex_);
+        eviction_model_binding_ = std::move(model_binding);
+        eviction_sink_          = std::move(sink);
+    }
+
 private:
+    void require_settled_slot(std::uint32_t slot) const {
+        if (slot >= resources_.catalog_capacity()) {
+            throw std::invalid_argument("slot id is outside the retained-session catalog");
+        }
+        if (instance_.program->has_context_transaction()) {
+            throw RequestError(RequestErrorKind::Overloaded,
+                               "slot catalog is busy with a resource transaction");
+        }
+        const typename ResourceManagement::CatalogSlotView view = resources_.catalog_slot(slot);
+        if (view.state == ResourceManagement::CatalogState::Claimed ||
+            view.state == ResourceManagement::CatalogState::ReservedForActive ||
+            view.active_references != 0) {
+            throw RequestError(RequestErrorKind::Overloaded,
+                               "slot is in use by an active request");
+        }
+    }
+
+    void require_session_digest(const typename ResourceManagement::CatalogSlotView& view,
+                                std::string_view expected_digest) const {
+        if (expected_digest.empty()) { return; }
+        const std::string digest =
+            view.state == ResourceManagement::CatalogState::Catalogued && view.handle != nullptr
+                ? instance_.program->continuation_digest(*view.handle)
+                : std::string();
+        if (digest != expected_digest) {
+            throw SlotSessionMismatch("slot session does not match if_digest");
+        }
+    }
+
+    void spill_catalog_slot(
+        std::uint32_t slot,
+        const typename ResourceManagement::ContinuationHandle& handle) noexcept {
+        if (!eviction_sink_ || slot >= slot_session_paths_.size() ||
+            slot_session_paths_[slot].empty()) {
+            return;
+        }
+        try {
+            RetainedSessionSnapshot snapshot;
+            snapshot.bytes = instance_.program->export_continuation(
+                handle, eviction_model_binding_, kDefaultSessionSnapshotLimit);
+            snapshot.tokens         = instance_.program->continuation_depth(handle);
+            snapshot.session_digest = instance_.program->continuation_digest(handle);
+            eviction_sink_(slot_session_paths_[slot], std::move(snapshot));
+        } catch (...) {}
+        clear_slot_session(slot);
+    }
+
+    void clear_slot_session(std::uint32_t slot) noexcept {
+        if (slot < slot_session_paths_.size()) { slot_session_paths_[slot].clear(); }
+    }
+
+    void bind_slot_session(std::uint32_t slot, std::string_view session_path) {
+        if (session_path.empty() || slot >= slot_session_paths_.size()) { return; }
+        for (std::size_t other = 0; other < slot_session_paths_.size(); ++other) {
+            if (other != slot && slot_session_paths_[other] == session_path) {
+                slot_session_paths_[other].clear();
+            }
+        }
+        slot_session_paths_[slot] = std::string(session_path);
+    }
+
     enum class HostWorkClass : std::uint8_t {
         Decode,
         Prefill,
@@ -541,6 +738,40 @@ private:
             if (slots_[lane]->capture_pending) { ++snapshot.capture_pending_requests; }
             if (slots_[lane]->terminal_reason) { ++snapshot.terminal_pending_requests; }
         }
+        std::vector<SlotState> slot_snapshot(resources_.catalog_capacity());
+        for (std::uint32_t slot = 0; slot < resources_.catalog_capacity(); ++slot) {
+            const typename ResourceManagement::CatalogSlotView view = resources_.catalog_slot(slot);
+            if (view.state != ResourceManagement::CatalogState::Catalogued ||
+                view.handle == nullptr) {
+                continue;
+            }
+            SlotDigestCacheEntry& cache = slot_digest_cache_[slot];
+            if (cache.id != view.id || cache.revision != view.revision) {
+                cache.id          = view.id;
+                cache.revision    = view.revision;
+                cache.depth       = instance_.program->continuation_depth(*view.handle);
+                cache.digest      = instance_.program->continuation_digest(*view.handle);
+                cache.checkpoints = instance_.program->continuation_checkpoints(*view.handle);
+            }
+            SlotState& state     = slot_snapshot[slot];
+            state.retained       = true;
+            state.prompt_tokens  = cache.depth;
+            state.cached_tokens  = cache.depth;
+            state.session_digest = cache.digest;
+            state.checkpoints    = cache.checkpoints;
+        }
+        for (std::uint32_t lane = 0; lane < max_concurrency_; ++lane) {
+            if (slots_[lane] == nullptr) { continue; }
+            const std::optional<std::uint32_t> publication =
+                resources_.lane_publication_slot(LaneId{lane});
+            if (!publication || *publication >= slot_snapshot.size()) { continue; }
+            SlotState& state    = slot_snapshot[*publication];
+            state.processing    = true;
+            state.prompt_tokens = slots_[lane]->prompt_summary.prompt_tokens;
+            if (slots_[lane]->begin) {
+                state.cached_tokens = slots_[lane]->begin->reused_prompt_tokens;
+            }
+        }
         detail_range.reset();
         record_detail(&RuntimeHostWorkStats::stats_publication_ns,
                       &RuntimeHostWorkStats::stats_publication_invocations, detail_started);
@@ -549,6 +780,7 @@ private:
         snapshot.host_work = cumulative_stats_.host_work;
         std::lock_guard lock(stats_mutex_);
         published_stats_ = snapshot;
+        published_slots_ = std::move(slot_snapshot);
     }
 
     void record_prefix_selection(const RequestPlanSummary& summary) noexcept {
@@ -2049,6 +2281,7 @@ private:
     const std::uint32_t max_concurrency_;
     const std::size_t max_outstanding_;
     const std::chrono::milliseconds pending_timeout_;
+    const bool context_cache_enabled_;
     ResourceManagement resources_;
 
     mutable std::mutex execution_mutex_;
@@ -2069,6 +2302,18 @@ private:
     std::size_t current_decode_lane_count_ = 0;
     RuntimeStats cumulative_stats_;
     RuntimeStats published_stats_;
+    std::string eviction_model_binding_;
+    std::function<void(std::string, RetainedSessionSnapshot&&)> eviction_sink_;
+    struct SlotDigestCacheEntry {
+        std::uint64_t id       = 0;
+        std::uint64_t revision = 0;
+        std::uint32_t depth    = 0;
+        std::string digest;
+        std::vector<SlotCheckpoint> checkpoints;
+    };
+    std::vector<std::string> slot_session_paths_;
+    std::vector<SlotDigestCacheEntry> slot_digest_cache_;
+    std::vector<SlotState> published_slots_;
     bool stopping_ = false;
     bool failed_   = false;
     std::thread worker_;

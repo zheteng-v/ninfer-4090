@@ -23,7 +23,7 @@ constexpr std::size_t kMaxSections       = 64;
 constexpr std::uint64_t kCrcPolynomial   = 0x42F0E1EBA9EA3693ULL;
 
 [[noreturn]] void malformed(const char* detail) {
-    throw std::runtime_error(std::string("invalid session snapshot: ") + detail);
+    throw std::invalid_argument(std::string("invalid session snapshot: ") + detail);
 }
 
 std::uint64_t checked_add(std::uint64_t a, std::uint64_t b, const char* detail) {

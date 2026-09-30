@@ -102,6 +102,10 @@ ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp
   LIBRARIES ninfer_runtime_support)
 ninfer_add_test(ninfer_session_snapshot_test SOURCES test_session_snapshot.cpp
   LIBRARIES ninfer_runtime_support)
+ninfer_add_test(ninfer_session_file_test SOURCES test_session_file.cpp
+  LIBRARIES ninfer_runtime_support)
+ninfer_add_test(ninfer_slot_spill_guard_test SOURCES test_slot_spill_guard.cpp
+  LIBRARIES ninfer_runtime_support)
 ninfer_add_test(ninfer_sampling_defaults_test
   SOURCES test_sampling_defaults.cpp
   LIBRARIES ninfer_engine ninfer_core)
@@ -171,6 +175,10 @@ ninfer_add_test(ninfer_qwen3_5_prefix_real_test
   SOURCES models/qwen3_5/test_engine_prefix_real.cpp
   LIBRARIES ninfer_engine)
 set_tests_properties(ninfer_qwen3_5_prefix_real_test PROPERTIES SKIP_RETURN_CODE 77)
+ninfer_add_test(ninfer_qwen3_5_session_real_test
+  SOURCES models/qwen3_5/test_engine_session_real.cpp
+  LIBRARIES ninfer_engine)
+set_tests_properties(ninfer_qwen3_5_session_real_test PROPERTIES SKIP_RETURN_CODE 77)
 ninfer_add_test(ninfer_qwen3_5_score_real_test
   SOURCES models/qwen3_5/test_engine_score_real.cpp
   LIBRARIES ninfer_engine)
