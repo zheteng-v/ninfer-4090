@@ -7,7 +7,9 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -149,6 +151,26 @@ void test_state_store(ninfer::DeviceContext& device) {
     images.copy_checkpoint_to_host(*host_source, host_export, device.stream);
     expect(host_export == device_export,
            "State export yields the same canonical payload from Host and Device replicas");
+
+    const auto imported_state = images.reserve_destination();
+    expect(imported_state.has_value(), "State checkpoint import destination allocation");
+    images.enqueue_checkpoint_import(
+        *imported_state,
+        q36::HostStateImageConstView{.data = device_export.data(), .layout = &layout.host},
+        device.stream);
+    device.synchronize();
+    expect(images.checkpoint_import_publishable(*imported_state),
+           "State checkpoint import remains private until publication");
+    images.publish_checkpoint_import(*imported_state, 1);
+    std::vector<std::byte> imported_export(layout.host.image_bytes, std::byte{0x55});
+    images.copy_checkpoint_to_host(*imported_state, imported_export, device.stream);
+    device.synchronize();
+    expect(imported_export == device_export &&
+               images.checkpoint_references(*imported_state) == 1,
+           "State checkpoint import publishes canonical bytes and reference ownership");
+    images.release_checkpoint_reference(*imported_state);
+    expect(images.release(*imported_state),
+           "State checkpoint import round-trips canonical bytes and releases cleanly");
 
     const auto moved_device = images.reserve_logical_destination();
     expect(moved_device.has_value(), "State replica split destination allocation");
@@ -341,6 +363,63 @@ void test_kv_store(ninfer::DeviceContext& device) {
     expect(!addresses.valid(*address) && pages.occupied() == 0 &&
                physical_pages.allocated_pages() == 0 && physical_pages.reserved_pages() == 0,
            "KV release invalidates generations and closes physical ownership");
+
+    std::vector<std::byte> import_payload(2U * host_layout.page_stride, std::byte{0});
+    for (std::uint32_t page = 0; page < 2; ++page) {
+        for (const ninfer::HostKVPlaneLayout& plane : host_layout.planes) {
+            std::fill_n(import_payload.begin() +
+                            static_cast<std::ptrdiff_t>(page * host_layout.page_stride +
+                                                        plane.offset),
+                        plane.page_payload_bytes,
+                        static_cast<std::byte>(0x20U + page));
+        }
+    }
+    {
+        auto aborted_import = addresses.prepare_inactive_import(65);
+        expect(aborted_import.has_value() && addresses.occupied() == 1 &&
+                   pages.occupied() == 2 &&
+                   physical_pages.allocated_pages() == 2 &&
+                   physical_pages.reserved_pages() == 0,
+               "KV import reservation owns unpublished zero-reference destinations");
+    }
+    expect(addresses.occupied() == 0 && pages.occupied() == 0 &&
+               physical_pages.allocated_pages() == 0 &&
+               physical_pages.reserved_pages() == 0,
+           "aborted KV import returns all logical and physical capacity");
+
+    auto imported_kv = addresses.prepare_inactive_import(65);
+    expect(imported_kv.has_value(), "KV import destination allocation");
+    addresses.enqueue_inactive_import(*imported_kv, import_payload.data(), host_layout,
+                                      device.stream);
+    device.synchronize();
+    expect(addresses.inactive_import_publishable(*imported_kv, 65),
+           "KV import remains private and publishable after transfer completion");
+    const auto imported_address = addresses.publish_inactive_import(std::move(*imported_kv), 65);
+    expect(!addresses.active(imported_address) &&
+               addresses.committed_frontier(imported_address) == 65 &&
+               addresses.mapped_pages(imported_address) == 2 &&
+               pages.protected_columns(addresses.logical_page(imported_address, 0)) == 64 &&
+               pages.protected_columns(addresses.logical_page(imported_address, 1)) == 1,
+           "published KV import installs exact frontier and checkpoint protection");
+    const std::vector<ninfer::DeviceKVPageHandle> imported_pages{
+        pages.physical(addresses.logical_page(imported_address, 0)),
+        pages.physical(addresses.logical_page(imported_address, 1)),
+    };
+    std::vector<std::byte> imported_payload(import_payload.size(), std::byte{0});
+    physical_pages.copy_to_host(imported_pages, imported_payload.data(), host_layout,
+                                device.stream);
+    device.synchronize();
+    expect(imported_payload == import_payload && addresses.release(imported_address) &&
+               pages.occupied() == 0 && physical_pages.allocated_pages() == 0,
+           "KV import round-trips canonical bytes and releases without leaks");
+
+    auto empty_import = addresses.prepare_inactive_import(0);
+    expect(empty_import.has_value() &&
+               addresses.inactive_import_publishable(*empty_import, 0),
+           "zero-frontier Backend KV import needs no physical page");
+    const auto empty_address = addresses.publish_inactive_import(std::move(*empty_import), 0);
+    expect(addresses.mapped_pages(empty_address) == 0 && addresses.release(empty_address),
+           "zero-frontier Backend KV import publishes and releases an empty address");
 
     // Verify crosses a page boundary, but the terminal commit consumes only its first column.
     const auto terminal = addresses.create_active(3, 0);

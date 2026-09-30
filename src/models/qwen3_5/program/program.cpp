@@ -454,6 +454,13 @@ Program::export_continuation(const ContinuationHandle& continuation,
     return impl_->export_continuation(continuation, model_binding, max_total_bytes);
 }
 
+ContinuationHandle
+Program::import_continuation(std::span<const std::uint8_t> bytes,
+                             std::string_view expected_model_binding,
+                             std::uint64_t max_total_bytes) {
+    return impl_->import_continuation(bytes, expected_model_binding, max_total_bytes);
+}
+
 ReleaseResult Program::release_continuation(ContinuationHandle&& continuation) noexcept {
     return impl_->release_continuation(std::move(continuation));
 }

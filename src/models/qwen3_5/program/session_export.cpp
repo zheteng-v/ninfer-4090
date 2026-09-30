@@ -13,6 +13,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -334,6 +335,218 @@ ProgramImpl::export_continuation(const ContinuationHandle& continuation,
     }
     validate_continuation_session_image(image, capacity);
     return encode_continuation_session_image(model_binding, image, max_total_bytes);
+}
+
+ContinuationHandle
+ProgramImpl::import_continuation(std::span<const std::uint8_t> bytes,
+                                 std::string_view expected_model_binding,
+                                 std::uint64_t max_total_bytes) {
+    if (expected_model_binding.empty() || max_total_bytes == 0) {
+        throw std::invalid_argument("session import binding or size limit is empty");
+    }
+    if (has_context_transaction() || pending_transaction_ || pressure_planning_active_ ||
+        has_unsettled_state_fork()) {
+        throw std::logic_error("session import requires a stable Program boundary");
+    }
+    if (!state_store || !state_images || !text_kv_addresses || !text_kv_pages) {
+        throw std::logic_error("Program session storage is unavailable");
+    }
+
+    // Decode, checksum, runtime-bind, and semantically validate the complete image before any
+    // Program-owned resource is reserved.
+    ContinuationSessionImage image = decode_continuation_session_image(
+        bytes, expected_model_binding, runtime_binding(*this), capacity, max_total_bytes);
+
+    std::uint32_t checkpoint_frontier = 0;
+    const auto include_frontier = [&](const std::optional<SessionCheckpointImage>& checkpoint) {
+        if (checkpoint) {
+            checkpoint_frontier = std::max(checkpoint_frontier, checkpoint->frontier);
+        }
+    };
+    include_frontier(image.endpoint);
+    include_frontier(image.rewrite);
+    for (const SessionCheckpointImage& anchor : image.long_anchors) {
+        checkpoint_frontier = std::max(checkpoint_frontier, anchor.frontier);
+    }
+    const std::uint32_t backend_checkpoint_frontier =
+        speculative_backend == SpeculativeBackend::Mtp ? checkpoint_frontier - 1U
+                                                       : checkpoint_frontier;
+
+    // Complete every potentially allocating metadata operation before reserving physical state.
+    SequenceState restored;
+    restored.execution_frontier      = image.execution_frontier;
+    restored.ledger_frontier         = image.ledger_frontier;
+    restored.ledger                  = std::move(image.ledger);
+    restored.prefix_identity         = std::move(image.prefix_identity);
+    restored.prefix_digests          = std::move(image.prefix_digests);
+    restored.rope_delta              = image.rope_delta;
+    restored.text_kv_valid           = image.text_kv.frontier;
+    restored.mtp_kv_valid            = speculative_backend == SpeculativeBackend::Mtp
+                                           ? image.backend_kv.frontier
+                                           : 0U;
+    restored.dflash_context_frontier = image.dflash_context_frontier;
+    restored.mtp_drafts              = image.mtp_drafts;
+    restored.mtp_draft_count         = image.mtp_draft_count;
+    restored.tail_hidden_valid       = image.tail_hidden_valid;
+    restored.rebuild_work            = image.rebuild_work;
+    restored.rebuild_tail_begin      = image.rebuild_tail_begin;
+    restored.long_anchors.resize(image.long_anchors.size());
+
+    std::vector<StateImageHandle> states(image.state_count);
+    std::vector<std::uint32_t> checkpoint_references(image.state_count, 0);
+
+    std::optional<std::uint32_t> continuation_index;
+    for (std::uint32_t index = 0; index < continuation_capacity; ++index) {
+        if (continuation_slots[index].role == ContinuationSlotRole::Free) {
+            continuation_index = index;
+            break;
+        }
+    }
+    if (!continuation_index) { throw std::bad_alloc(); }
+    const std::uint32_t slot_index = *continuation_index;
+    continuation_slots[slot_index].role = ContinuationSlotRole::ReservedMaterialization;
+
+    std::optional<KVInactiveImportReservation> text_import;
+    std::optional<KVInactiveImportReservation> backend_import;
+    bool transfers_may_be_in_flight = false;
+    try {
+        for (StateImageHandle& state : states) {
+            std::optional<StateImageHandle> destination = state_store->reserve_destination();
+            if (!destination) { throw std::bad_alloc(); }
+            state = *destination;
+        }
+
+        const auto imported_state = [&](const SessionCheckpointImage& checkpoint) {
+            return states[checkpoint.state_index];
+        };
+        if (image.endpoint) {
+            const StateImageHandle endpoint = imported_state(*image.endpoint);
+            restored.state = ActiveStateBinding{.read = endpoint, .write = endpoint};
+            restored.endpoint_valid = true;
+        }
+        if (image.rewrite) {
+            const StateImageHandle rewrite = imported_state(*image.rewrite);
+            restored.rewrite_state         = rewrite;
+            restored.rewrite_checkpoint = RewriteCheckpoint{
+                .valid = true,
+                .kind  = image.rewrite->kind == runtime::CheckpointKind::TurnClosure
+                             ? RewriteCheckpointKind::TurnClosure
+                             : RewriteCheckpointKind::ResponseReplay,
+                .frontier     = image.rewrite->frontier,
+                .rebuild_work = image.rewrite->rebuild_work,
+            };
+            ++checkpoint_references[image.rewrite->state_index];
+        }
+        for (std::size_t index = 0; index < image.long_anchors.size(); ++index) {
+            const SessionCheckpointImage& source = image.long_anchors[index];
+            restored.long_anchors[index] = LongAnchorCheckpoint{
+                .state        = imported_state(source),
+                .frontier     = source.frontier,
+                .ordinal      = source.ordinal,
+                .rebuild_work = source.rebuild_work,
+            };
+            ++checkpoint_references[source.state_index];
+        }
+
+        std::optional<KVInactiveImportReservation> prepared_text =
+            text_kv_addresses->prepare_inactive_import(image.text_kv.frontier);
+        if (!prepared_text) { throw std::bad_alloc(); }
+        text_import.emplace(std::move(*prepared_text));
+
+        const bool has_backend = image.runtime.backend_page_bytes != 0;
+        if (has_backend != (backend_kv_addresses != nullptr && backend_kv_pages != nullptr)) {
+            throw std::logic_error("session Backend KV storage is inconsistent");
+        }
+        if (has_backend) {
+            std::optional<KVInactiveImportReservation> prepared_backend =
+                backend_kv_addresses->prepare_inactive_import(image.backend_kv.frontier);
+            if (!prepared_backend) { throw std::bad_alloc(); }
+            backend_import.emplace(std::move(*prepared_backend));
+        }
+        restored.kv = SequenceKVBundle{
+            .text = text_import->address(),
+            .backend = backend_import ? std::optional<KVAddressSpaceHandle>(backend_import->address())
+                                      : std::nullopt,
+        };
+
+        // Tensor views are derived while destinations are still private; this also validates that
+        // every referenced StateImage has the required Device residency.
+        refresh_state_views(restored);
+        for (std::uint32_t state = 0; state < image.state_count; ++state) {
+            if (!state_store->checkpoint_import_publishable(states[state])) {
+                throw std::logic_error("session StateImage import is not publishable");
+            }
+        }
+        if (!text_kv_addresses->inactive_import_publishable(*text_import,
+                                                             checkpoint_frontier) ||
+            (backend_import &&
+             !backend_kv_addresses->inactive_import_publishable(
+                 *backend_import, backend_checkpoint_frontier)) ||
+            continuation_slots[slot_index].role !=
+                ContinuationSlotRole::ReservedMaterialization) {
+            throw std::logic_error("session import reservations are not publishable");
+        }
+
+        transfers_may_be_in_flight = true;
+        const StateImageHostLayout& state_layout = state_images->host_layout();
+        for (std::uint32_t state = 0; state < image.state_count; ++state) {
+            const std::size_t offset = static_cast<std::size_t>(state) * state_layout.image_bytes;
+            state_store->enqueue_checkpoint_import(
+                states[state],
+                HostStateImageConstView{
+                    .data = reinterpret_cast<const std::byte*>(image.state_payload.data()) + offset,
+                    .layout = &state_layout,
+                },
+                device.stream);
+        }
+        text_kv_addresses->enqueue_inactive_import(
+            *text_import, reinterpret_cast<const std::byte*>(image.text_kv.payload.data()),
+            plan_host_kv_page_layout(text_kv_pages->physical_pool().geometry()), device.stream);
+        if (backend_import) {
+            backend_kv_addresses->enqueue_inactive_import(
+                *backend_import,
+                reinterpret_cast<const std::byte*>(image.backend_kv.payload.data()),
+                plan_host_kv_page_layout(backend_kv_pages->physical_pool().geometry()),
+                device.stream);
+        }
+        device.synchronize();
+        transfers_may_be_in_flight = false;
+
+        // Publication from here to the returned handle is deliberately non-throwing.
+        static_assert(std::is_nothrow_move_assignable_v<SequenceState>);
+        for (std::uint32_t state = 0; state < image.state_count; ++state) {
+            state_store->publish_checkpoint_import(states[state], checkpoint_references[state]);
+        }
+        const KVAddressSpaceHandle text = text_kv_addresses->publish_inactive_import(
+            std::move(*text_import), checkpoint_frontier);
+        if (text != restored.kv->text) { std::terminate(); }
+        text_import.reset();
+        if (backend_import) {
+            const KVAddressSpaceHandle backend = backend_kv_addresses->publish_inactive_import(
+                std::move(*backend_import), backend_checkpoint_frontier);
+            if (!restored.kv->backend || backend != *restored.kv->backend) { std::terminate(); }
+            backend_import.reset();
+        }
+        continuation_states[slot_index] = std::move(restored);
+        continuation_slots[slot_index].role = ContinuationSlotRole::Catalogued;
+        advance_resource_revision();
+        return ContractAccess::make_continuation(
+            this, slot_index, continuation_slots[slot_index].generation);
+    } catch (...) {
+        const std::exception_ptr failure = std::current_exception();
+        if (transfers_may_be_in_flight) {
+            try {
+                device.synchronize();
+            } catch (...) {}
+        }
+        backend_import.reset();
+        text_import.reset();
+        for (auto state = states.rbegin(); state != states.rend(); ++state) {
+            if (state_store->valid(*state) && !state_store->release(*state)) { std::terminate(); }
+        }
+        continuation_slots[slot_index].role = ContinuationSlotRole::Free;
+        std::rethrow_exception(failure);
+    }
 }
 
 } // namespace ninfer::models::qwen3_5::detail

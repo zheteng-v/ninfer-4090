@@ -21,6 +21,7 @@ class KVAddressSpaceStore;
 class HostKVExtentStore;
 class KVPrefixForkReservation;
 class KVActiveSnapshotReservation;
+class KVInactiveImportReservation;
 
 class HostKVExtentCapability {
 public:
@@ -240,6 +241,48 @@ private:
     friend class KVAddressSpaceStore;
 };
 
+// Owns an unpublished inactive address and its zero-reference Device page destinations. The
+// reservation can receive Host payloads, but no logical page or address becomes reusable until
+// KVAddressSpaceStore publishes the complete import in one non-throwing step.
+class KVInactiveImportReservation {
+public:
+    KVInactiveImportReservation() noexcept = default;
+    ~KVInactiveImportReservation();
+
+    KVInactiveImportReservation(KVInactiveImportReservation&& other) noexcept
+        : owner_(std::exchange(other.owner_, nullptr)), address_(other.address_),
+          page_reservation_(std::move(other.page_reservation_)), pages_(std::move(other.pages_)),
+          physical_(std::move(other.physical_)), frontier_(other.frontier_) {}
+
+    KVInactiveImportReservation& operator=(KVInactiveImportReservation&&)      = delete;
+    KVInactiveImportReservation(const KVInactiveImportReservation&)            = delete;
+    KVInactiveImportReservation& operator=(const KVInactiveImportReservation&) = delete;
+
+    [[nodiscard]] bool valid() const noexcept { return owner_ != nullptr; }
+    [[nodiscard]] KVAddressSpaceHandle address() const noexcept { return address_; }
+    [[nodiscard]] std::span<const DeviceKVPageHandle> physical_pages() const noexcept {
+        return physical_;
+    }
+
+private:
+    KVInactiveImportReservation(KVAddressSpaceStore& owner, KVAddressSpaceHandle address,
+                                DeviceKVPageReservation&& page_reservation,
+                                std::vector<LogicalKVPageHandle>&& pages,
+                                std::vector<DeviceKVPageHandle>&& physical,
+                                std::uint32_t frontier) noexcept
+        : owner_(&owner), address_(address), page_reservation_(std::move(page_reservation)),
+          pages_(std::move(pages)), physical_(std::move(physical)), frontier_(frontier) {}
+
+    KVAddressSpaceStore* owner_ = nullptr;
+    KVAddressSpaceHandle address_;
+    DeviceKVPageReservation page_reservation_;
+    std::vector<LogicalKVPageHandle> pages_;
+    std::vector<DeviceKVPageHandle> physical_;
+    std::uint32_t frontier_ = 0;
+
+    friend class KVAddressSpaceStore;
+};
+
 class LogicalKVPageStore {
 public:
     LogicalKVPageStore(DeviceKVPagePool& physical, std::uint32_t logical_capacity)
@@ -362,6 +405,16 @@ public:
         page.references         = 1;
         page.writer_references  = writer ? 1U : 0U;
         page.destination_pinned = false;
+    }
+
+    [[nodiscard]] bool
+    transfer_destination_publishable(LogicalKVPageHandle handle) const noexcept {
+        if (!valid(handle)) { return false; }
+        const Page& page = pages_[handle.index_];
+        return page.device_replica && !page.pending_device_replica && !page.host_replica &&
+               page.destination_pinned && page.references == 0 && page.writer_references == 0 &&
+               page.active_references == 0 && page.source_pins == 0 &&
+               page.committed_columns != 0;
     }
 
     void abort_transfer_destination(LogicalKVPageHandle handle,
@@ -884,6 +937,123 @@ public:
         }
         address.occupied = true;
         return KVAddressSpaceHandle(this, index, address.generation);
+    }
+
+    [[nodiscard]] std::optional<KVInactiveImportReservation>
+    prepare_inactive_import(std::uint32_t frontier) {
+        const std::uint32_t page_count = pages_for_tokens(frontier);
+        if (page_count > page_capacity_) {
+            throw std::invalid_argument("KV inactive import frontier is invalid");
+        }
+        std::vector<LogicalKVPageHandle> logical(page_count);
+        std::vector<DeviceKVPageHandle> physical;
+        physical.reserve(page_count);
+        std::optional<KVAddressSpaceHandle> address = create_inactive();
+        if (!address) { return std::nullopt; }
+        DeviceKVPageReservation page_reservation;
+        if (page_count != 0) {
+            std::optional<DeviceKVPageReservation> reserved =
+                pages_->physical_pool().reserve(page_count);
+            if (!reserved) {
+                if (!release(*address)) { std::terminate(); }
+                return std::nullopt;
+            }
+            page_reservation = std::move(*reserved);
+        }
+        KVInactiveImportReservation import(*this, *address, std::move(page_reservation),
+                                            std::move(logical), std::move(physical), frontier);
+        try {
+            const std::uint32_t page_size = static_cast<std::uint32_t>(kPagedKVPageSize);
+            for (std::uint32_t page = 0; page < page_count; ++page) {
+                const std::uint32_t begin = page * page_size;
+                const std::uint32_t columns = std::min(page_size, frontier - begin);
+                import.pages_[page] = pages_->materialize_transfer_destination(
+                    import.page_reservation_, columns);
+                import.physical_.push_back(pages_->physical(import.pages_[page]));
+            }
+        } catch (...) {
+            abort_inactive_import(import);
+            throw;
+        }
+        return import;
+    }
+
+    void enqueue_inactive_import(const KVInactiveImportReservation& import,
+                                 const std::byte* source, const HostKVPageLayout& layout,
+                                 cudaStream_t stream = nullptr) const {
+        if (import.owner_ != this || !valid(import.address_) ||
+            import.pages_.size() != import.physical_.size() ||
+            layout != plan_host_kv_page_layout(pages_->physical_pool().geometry())) {
+            throw std::logic_error("KV inactive import transfer is invalid");
+        }
+        if (import.pages_.empty()) {
+            if (import.frontier_ != 0) {
+                throw std::logic_error("KV inactive import has no transfer pages");
+            }
+            return;
+        }
+        if (source == nullptr) {
+            throw std::logic_error("KV inactive import payload is null");
+        }
+        pages_->physical_pool().copy_from_host(source, layout, import.physical_, stream);
+    }
+
+    [[nodiscard]] bool inactive_import_publishable(
+        const KVInactiveImportReservation& import,
+        std::uint32_t checkpoint_frontier) const noexcept {
+        if (import.owner_ != this || !valid(import.address_) ||
+            import.pages_.size() != import.physical_.size() ||
+            (import.pages_.empty() != (import.frontier_ == 0)) ||
+            checkpoint_frontier > import.frontier_) {
+            return false;
+        }
+        const Address& address = addresses_[import.address_.index_];
+        if (address.active || address.row || address.reservation.valid() ||
+            address.page_count != 0 || address.committed_frontier != 0 ||
+            address.checkpoint_frontier != 0 || import.page_reservation_.pages() != 0) {
+            return false;
+        }
+        return std::all_of(import.pages_.begin(), import.pages_.end(),
+                           [&](LogicalKVPageHandle page) {
+                               return pages_->transfer_destination_publishable(page);
+                           });
+    }
+
+    [[nodiscard]] KVAddressSpaceHandle
+    publish_inactive_import(KVInactiveImportReservation&& import,
+                            std::uint32_t checkpoint_frontier) noexcept {
+        if (!inactive_import_publishable(import, checkpoint_frontier)) { std::terminate(); }
+        Address& address = addresses_[import.address_.index_];
+        for (std::uint32_t page = 0; page < import.pages_.size(); ++page) {
+            membership(address, page) = import.pages_[page];
+            pages_->publish_transfer_destination(import.pages_[page], false);
+        }
+        address.page_count          = static_cast<std::uint32_t>(import.pages_.size());
+        address.committed_frontier  = import.frontier_;
+        address.checkpoint_frontier = checkpoint_frontier;
+        const KVAddressSpaceHandle result = import.address_;
+        import.owner_                    = nullptr;
+        import.address_                  = {};
+        import.pages_.clear();
+        import.physical_.clear();
+        import.frontier_ = 0;
+        rebuild_checkpoint_protection();
+        return result;
+    }
+
+    void abort_inactive_import(KVInactiveImportReservation& import) noexcept {
+        if (import.owner_ != this) { return; }
+        for (auto page = import.pages_.rbegin(); page != import.pages_.rend(); ++page) {
+            if (pages_->valid(*page)) {
+                pages_->abort_transfer_destination(*page, import.page_reservation_);
+            }
+        }
+        if (valid(import.address_) && !release(import.address_)) { std::terminate(); }
+        import.owner_   = nullptr;
+        import.address_ = {};
+        import.pages_.clear();
+        import.physical_.clear();
+        import.frontier_ = 0;
     }
 
     [[nodiscard]] bool valid(KVAddressSpaceHandle handle) const noexcept {
@@ -1868,6 +2038,10 @@ inline KVPrefixForkReservation::~KVPrefixForkReservation() {
 
 inline KVActiveSnapshotReservation::~KVActiveSnapshotReservation() {
     if (owner_ != nullptr) { owner_->abort_active_snapshot(*this); }
+}
+
+inline KVInactiveImportReservation::~KVInactiveImportReservation() {
+    if (owner_ != nullptr) { owner_->abort_inactive_import(*this); }
 }
 
 } // namespace ninfer::models::qwen3_5::detail

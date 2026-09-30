@@ -279,6 +279,35 @@ public:
                               stream);
     }
 
+    void enqueue_checkpoint_import(StateImageHandle handle,
+                                   qwen3_5::HostStateImageConstView source,
+                                   cudaStream_t stream = nullptr) {
+        Object& object = require(handle);
+        if (object.role != StateImageRole::ReservedDestination || !object.device_slot ||
+            object.host_slot || object.source_pins != 0 || object.checkpoint_references != 0 ||
+            object.destination_pinned || has_pending_replica(object)) {
+            throw std::logic_error("StateImage checkpoint import destination is invalid");
+        }
+        device_->copy_from_host(source, *object.device_slot, stream);
+    }
+
+    [[nodiscard]] bool checkpoint_import_publishable(StateImageHandle handle) const noexcept {
+        if (!valid(handle)) { return false; }
+        const Object& object = objects_[handle.index_];
+        return object.role == StateImageRole::ReservedDestination && object.device_slot &&
+               !object.host_slot && object.source_pins == 0 && object.checkpoint_references == 0 &&
+               !object.destination_pinned && !has_pending_replica(object);
+    }
+
+    void publish_checkpoint_import(StateImageHandle handle,
+                                   std::uint32_t checkpoint_references) noexcept {
+        if (!checkpoint_import_publishable(handle)) { std::terminate(); }
+        Object& object               = objects_[handle.index_];
+        object.content_epoch         = next_epoch();
+        object.checkpoint_references = checkpoint_references;
+        object.role                  = StateImageRole::CheckpointImmutable;
+    }
+
     void move_checkpoint_to_active(StateImageHandle handle) {
         Object& object = require(handle);
         if (object.role != StateImageRole::CheckpointImmutable || !object.device_slot ||
