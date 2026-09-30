@@ -1,7 +1,6 @@
 #include "serve/generation_service.h"
 
 #include "product/media_acquire/acquire.h"
-#include <spdlog/logger.h>
 #include "serve/translate.h"
 
 #include <algorithm>
@@ -231,11 +230,13 @@ private:
 
 } // namespace
 
-GenerationService::GenerationService(ServeOptions options, StartupObserver startup_observer,
-                                     std::shared_ptr<spdlog::logger> logger)
-    : options_(std::move(options)), logger_(std::move(logger)) {
+GenerationService::GenerationService(
+    ServeOptions options, StartupObserver startup_observer,
+    std::function<void(const ninfer::SlotAutoSaveEvent&)> auto_save_listener)
+    : options_(std::move(options)) {
     ninfer::EngineOptions engine_options;
     engine_options.artifact_path            = options_.artifact_path;
+    engine_options.chat_template_path       = options_.chat_template_path;
     engine_options.device                   = options_.device;
     engine_options.max_context              = options_.max_context;
     engine_options.kv_capacity              = options_.kv_capacity;
@@ -243,30 +244,12 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.max_pending_requests     = options_.max_pending_requests;
     engine_options.pending_timeout_ms       = options_.pending_timeout_ms;
     engine_options.prefill_chunk            = options_.prefill_chunk;
-    engine_options.turn_checkpoint_ring     = options_.turn_checkpoint_ring;
     engine_options.auto_save_evicted        = options_.auto_save_evicted;
     if (options_.auto_save_evicted) {
-        engine_options.auto_save_listener = [logger = logger_](
-                                                const ninfer::SlotAutoSaveEvent& event) {
-            if (!logger) { return; }
-            if (event.skipped_behind_tokens) {
-                logger->info("{}", "slot auto-save SKIPPED file=" + event.path +
-                                       " n_spill=" + std::to_string(event.tokens) +
-                                       " n_file=" + std::to_string(*event.skipped_behind_tokens) +
-                                       " (a deeper snapshot already holds this file)");
-            } else if (event.error.empty()) {
-                logger->info("{}", "slot auto-save file=" + event.path +
-                                       " n_saved=" + std::to_string(event.tokens) +
-                                       " bytes=" + std::to_string(event.bytes));
-            } else {
-                logger->warn("{}",
-                             "slot auto-save FAILED file=" + event.path + ": " + event.error);
-            }
-        };
+        engine_options.auto_save_listener = std::move(auto_save_listener);
     }
     engine_options.kv_cache                 = options_.kv_cache;
     engine_options.enable_vision            = options_.enable_vision;
-    engine_options.vision_max_tokens        = options_.vision_max_tokens;
     engine_options.use_cuda_graph           = options_.use_cuda_graph;
     engine_options.speculative              = options_.speculative;
     engine_options.context_cache            = options_.context_cache;
@@ -275,11 +258,8 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     engine_options.media_live_bytes         = options_.media_live_bytes;
     engine_options.media_preprocess_threads = options_.media_preprocess_threads;
     engine_options.startup_observer         = std::move(startup_observer);
-    engine_              = std::make_unique<ninfer::Engine>(std::move(engine_options));
-    prompt_capabilities_ = engine_->prompt_capabilities();
-    automatic_private_anchors_ =
-        resolve_automatic_private_anchors(options_, engine_->options().context_cache);
-    request_capacity_    = std::make_shared<RequestCapacity>(
+    engine_           = std::make_unique<ninfer::Engine>(std::move(engine_options));
+    request_capacity_ = std::make_shared<RequestCapacity>(
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests);
 }
 
@@ -331,15 +311,13 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
                                                 CacheParticipation cache_participation,
                                                 DeadlinePolicy deadline_policy) const {
     PreparedRequest prepared;
-    const ResolvedPromptSemantics semantics =
-        resolve_prompt_semantics(request, options_, prompt_capabilities_);
-    ninfer::RequestOptions request_options = to_request_options(
+    const ResolvedPromptSemantics semantics = resolve_prompt_semantics(request, options_);
+    ninfer::RequestOptions request_options  = to_request_options(
         request, options_, semantics, cache_participation == CacheParticipation::ReadWrite);
-    prepared.enable_thinking            = semantics.enable_thinking;
-    prepared.thinking_budget            = request_options.execution.thinking.budget;
-    prepared.effective_reasoning_effort = semantics.effective_reasoning_effort;
-    prepared.preserve_thinking          = semantics.preserve_thinking;
-    const bool request_has_media        = request.media_item_count() != 0;
+    prepared.thinking_budget     = request_options.execution.thinking.budget;
+    prepared.reasoning_effort    = semantics.reasoning_effort;
+    prepared.preserve_thinking   = semantics.preserve_thinking;
+    const bool request_has_media = request.media_item_count() != 0;
     if (request_has_media && !options_.enable_vision) {
         const std::invalid_argument error("Vision is disabled for this server");
         throw_invalid_input(error, "vision_disabled");
@@ -365,11 +343,6 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
         input.context_cache.allow_engine_automatic_shared_prefixes =
             input.context_cache.allow_engine_automatic_shared_prefixes &&
             protocol_allows_engine_automatic;
-        // Server policy, not protocol: every prompt gets the same trailing-boundary anchors
-        // whichever endpoint it came through. Zero when reuse is off (prepare_impl then also
-        // clears allow_prefix_reuse, so the Frontend ignores the hint either way).
-        input.context_cache.automatic_private_anchors =
-            cache_participation == CacheParticipation::ReadWrite ? automatic_private_anchors_ : 0U;
         prepared.acquisition_seconds =
             std::chrono::duration<double>(Clock::now() - acquisition_started).count();
         check_preparation_control(prepared.lifetime->deadline, is_cancelled);
@@ -379,6 +352,11 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
         };
         ninfer::PreparedPrompt prompt = engine_->prepare(std::move(input), control);
         check_preparation_control(prepared.lifetime->deadline, is_cancelled);
+        prepared.enable_thinking = prompt.summary().starts_in_reasoning;
+        if (!prepared.enable_thinking) {
+            request_options.execution.thinking.budget.reset();
+            prepared.thinking_budget.reset();
+        }
         prepared.prompt_tokens = static_cast<int>(prompt.summary().prompt_tokens);
         prepared.preparation   = prompt.preparation_stats();
         prepared.prepare_seconds =
@@ -406,8 +384,7 @@ int GenerationService::count_prompt_tokens(const GenerationRequest& request,
     }
     const Clock::time_point deadline =
         Clock::now() + std::chrono::milliseconds(options_.pending_timeout_ms);
-    const ResolvedPromptSemantics semantics =
-        resolve_prompt_semantics(request, options_, prompt_capabilities_);
+    const ResolvedPromptSemantics semantics = resolve_prompt_semantics(request, options_);
     try {
         std::size_t remaining_media_bytes =
             std::min(options_.max_request_bytes, ninfer::kMaximumPromptMediaBytes);
@@ -457,8 +434,6 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.thinking            = result.thinking;
     outcome.finish_reason       = result.finish_reason;
     outcome.matched_stop_string = std::move(result.matched_stop_string);
-    outcome.id_slot             = result.slot;
-    outcome.session_digest      = std::move(result.session_digest);
 
     outcome.metrics.prepare_seconds = prepared.prepare_seconds;
     outcome.metrics.ttft_seconds =

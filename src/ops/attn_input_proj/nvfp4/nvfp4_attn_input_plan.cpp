@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/attn_input_proj/nvfp4/nvfp4_attn_input_plan.h"
 
 #include "ops/linear/nvfp4/nvfp4_config.h"
@@ -17,8 +18,10 @@ enum class Nvfp4AttnInputRoute : std::uint8_t {
 
 Nvfp4AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("nvfp4 attn_input_proj: T must be positive"); }
-    if (policy == LinearPolicy::A16Only) { return Nvfp4AttnInputRoute::A16; }
-    if (policy != LinearPolicy::AllowA4) {
+    if (policy == LinearPolicy::A16Only || policy == LinearPolicy::AllowA8) {
+        return Nvfp4AttnInputRoute::A16;
+    }
+    if (!allows_a4(policy)) {
         throw std::invalid_argument("nvfp4 attn_input_proj: unsupported policy");
     }
     return tokens >= 4 ? Nvfp4AttnInputRoute::W4A4 : Nvfp4AttnInputRoute::A16;

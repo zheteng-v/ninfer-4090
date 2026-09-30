@@ -3,10 +3,6 @@
 // Product-side adapter from one protocol-neutral generation request to the public Engine. Wire
 // adapters normalize before this layer and render IDs, usage, and response events after it.
 
-namespace spdlog {
-class logger;
-}
-
 #include "ninfer/engine.h"
 #include "serve/request.h"
 #include "serve/serve_options.h"
@@ -60,10 +56,6 @@ struct GenerationOutcome {
     ninfer::FinishReason finish_reason = ninfer::FinishReason::OutputLimit;
     std::optional<std::string> matched_stop_string;
     GenerationMetrics metrics;
-    // Lane that served the request and the retained session's digest (empty when the lane did
-    // not retain it) - the handle a client needs for /slots save operations.
-    int id_slot = -1;
-    std::string session_digest;
 };
 
 struct StreamSink {
@@ -95,17 +87,16 @@ struct PreparedRequest {
     int prompt_tokens    = 0;
     bool enable_thinking = true;
     std::optional<std::uint32_t> thinking_budget;
-    std::optional<ninfer::ReasoningEffort> effective_reasoning_effort;
-    bool preserve_thinking = false;
+    std::optional<ninfer::ReasoningEffort> reasoning_effort;
+    std::optional<bool> preserve_thinking;
     std::shared_ptr<RequestLifetime> lifetime;
 };
 
 class GenerationService {
 public:
-    // The logger is fork-local: the auto-save-on-eviction listener reports through it, and
-    // that line is the only production evidence that eviction spills actually happen.
-    explicit GenerationService(ServeOptions options, StartupObserver startup_observer = {},
-                               std::shared_ptr<spdlog::logger> logger = {});
+    explicit GenerationService(
+        ServeOptions options, StartupObserver startup_observer = {},
+        std::function<void(const ninfer::SlotAutoSaveEvent&)> auto_save_listener = {});
 
     [[nodiscard]] const ServeOptions& options() const noexcept { return options_; }
 
@@ -113,22 +104,16 @@ public:
     // value instead of reinterpreting optional defaults from ServeOptions.
     [[nodiscard]] const ninfer::EngineOptions& engine_options() const { return engine_->options(); }
 
-    // Engine-automatic private long anchors stamped on every prepared prompt; see
-    // resolve_automatic_private_anchors. Reported on the boot line and the server_start record.
-    [[nodiscard]] std::uint32_t automatic_private_anchors() const noexcept {
-        return automatic_private_anchors_;
-    }
-
     [[nodiscard]] ninfer::LoadSummary load_summary() const { return engine_->load_summary(); }
 
     [[nodiscard]] ninfer::MemorySummary memory_summary() const { return engine_->memory_summary(); }
-
-    [[nodiscard]] bool healthy() const { return engine_->healthy(); }
 
     [[nodiscard]] ninfer::RuntimeStats runtime_stats() const { return engine_->runtime_stats(); }
 
     [[nodiscard]] bool is_available() const { return engine_->is_available(); }
 
+    // Includes preparation, engine admission, generation, and response release. This is the
+    // authoritative public in-flight count used by serving metrics.
     [[nodiscard]] std::size_t active_request_count() const;
 
     [[nodiscard]] ninfer::MediaCacheSummary media_cache_summary() const {
@@ -157,11 +142,8 @@ public:
         return engine_->slot_states();
     }
 
-    // The slot id space of /slots operations: one slot per private continuation-catalog cell
-    // (resolved at Engine construction; at least max_concurrency).
     [[nodiscard]] std::uint32_t slot_count() const {
-        const ninfer::EngineOptions& options = engine_->options();
-        return options.context_cache.max_private_continuations.value_or(options.max_concurrency);
+        return static_cast<std::uint32_t>(engine_->slot_states().size());
     }
 
     [[nodiscard]] PreparedRequest prepare(const GenerationRequest& req,
@@ -198,10 +180,7 @@ private:
     acquire_request_lifetime(DeadlinePolicy deadline_policy) const;
 
     ServeOptions options_;
-    std::shared_ptr<spdlog::logger> logger_;
     std::unique_ptr<ninfer::Engine> engine_;
-    std::uint32_t automatic_private_anchors_ = 0;
-    ninfer::PromptCapabilities prompt_capabilities_;
     std::shared_ptr<RequestCapacity> request_capacity_;
 };
 

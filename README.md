@@ -1,6 +1,8 @@
 # NInfer-4090
 
-NInfer-4090 runs **Qwen3.8-27B** on one 24 GB NVIDIA GeForce RTX 4090. It is an `sm_89` port of
+NInfer-4090 is the community `sm_89` downstream dedicated to pushing **48 GiB RTX 4090** cards as
+far as correctness and reproducible engineering allow. Its primary workload is **Qwen3.8-27B**
+with long context, MTP speculative decoding, and native Linux serving. It is an `sm_89` port of
 [NInfer-3090](https://github.com/Don-Chad/ninfer-3090), which derives from
 [Neroued/ninfer](https://github.com/Neroued/ninfer), a specialized C++20/CUDA inference engine.
 The engine loads the official groupwise `.ninfer` artifact, serves OpenAI- and
@@ -14,9 +16,25 @@ replace that line. Every iteration starts with an audit of both
 [sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090). See the
 [downstream maintenance contract and roadmap](docs/maintainer/downstream-maintenance.md).
 
+The project follows Neroued's architecture and model direction instead of becoming an unrelated
+engine. Generic fixes should go upstream; Ada-specific capability dispatch, kernels, memory
+planning, and 48 GiB profiles stay explicit and measurable here. The goal is to make the resulting
+work useful and reproducible for the wider 48 GiB RTX 4090 community, not to optimize one private
+machine behind unpublished settings.
+
 This fork targets `sm_89` and Linux. Blackwell-only NVFP4/W4A4 execution is unavailable; the
 engine uses the same groupwise-int path as the 3090 base. The Windows path and the
 Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.
+
+The `sync/2026-09-30-v3-sm89` integration line uses NInfer artifact v3 and the bound-instance Qwen3.5
+runtime architecture from upstream. It has been compiled end to end for `sm_89`, and the official
+`qwen3_8_27b_v3.ninfer` artifact has passed host binding for Text, MTP, DFlash2, and Vision.
+It also completes real 262K INT8 device startup and text inference with both no speculation and
+MTP3. Upstream's generic Jinja executor is integrated and has passed reference-template, OpenAI
+tool-call, Vision, and dual-lane 200K probes on the real model. The production v2 line remains the
+default until the remaining release gates finish. The v3 line also restores live Prometheus
+`/metrics` and passes focused OpenAI/Anthropic streaming, cancellation, queue-timeout, and
+two-lane-isolation gates.
 
 ## Measured results on the RTX 4090
 
@@ -296,24 +314,24 @@ GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
   server without changes. Processing/deferred occupancy is reserved before prompt preparation
   or engine submission and held through response release, so accepted work cannot disappear from
   metrics while queued. Prompt tokens count only computed prefill; prefix-cache hits are excluded,
-  as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache hits, and MTP
-  draft/acceptance totals.
-- **`GET /slots`.** A llama.cpp-shaped slot table read from the engine's real lane state: busy
-  slots report their request's prompt and reused-prefix sizes, idle retained slots report the
+  as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache hits,
+  speculative draft/acceptance totals, live slot occupancy, and slot-operation outcomes.
+- **`GET /slots`.** A llama.cpp-shaped slot table read from the engine's private-continuation
+  catalog: busy slots report their request's prompt and reused-prefix sizes, retained slots report the
   resident session's depth and its identifying `session_digest`. Truthful per-slot attribution
   holds at any `--max-concurrency`.
 - **Slot session save/restore.** `--slot-save-path DIR` (off by default) enables llama.cpp-style
   `POST /slots/{id}?action=save|restore|erase`: one idle slot's complete resident session -
-  paged Text and MTP KV, GDN linear-attention state, rewrite checkpoint, long anchors, and
+  paged Text and speculative-backend KV, GDN linear-attention state, retained checkpoints, and
   prefix identity - moves to or from disk, and a restored slot reuses the cache across server
   restarts instead of re-prefilling (a 6.9k-token session restores in about 0.1 s against a
   multi-second reprefill).
-  Sessions are identified by a stable `session_digest`; chat completions carry `id_slot` and the
-  digest next to `timings`, and `save`/`erase` accept an `if_digest` precondition checked
+  Sessions are identified by a stable `session_digest`; `/slots`, save, and restore publish it,
+  and `save`/`erase` accept an `if_digest` precondition checked
   atomically, so a client always persists exactly the session it means. A restored session is
-  reusable from its endpoint, its rewrite checkpoint, or any retained long anchor; the GDN
-  state cannot rewind below the deepest retained checkpoint, and the DFlash backend is not
-  supported. Details in [docs/serving.md](docs/serving.md).
+  reusable from its endpoint or a retained checkpoint. Images bind to the exact artifact,
+  runtime layout, KV geometry, and speculative backend. Details in
+  [docs/serving.md](docs/serving.md).
 - **Reuse-aware lane choice.** When prefix reuse ties (typically zero for a fresh session),
   admission picks the lane whose occupation costs least to replace - an empty lane before any
   retained session, then the shallowest - so a burst request no longer evicts a deep resident

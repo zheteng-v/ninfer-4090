@@ -13,7 +13,7 @@ int run_nvfp4_a16() {
     constexpr std::array attn_invocations{
         Invocation{1, CallForm::Policy, ops::LinearPolicy::A16Only},
         Invocation{2, CallForm::Policy, ops::LinearPolicy::A16Only},
-        Invocation{4, CallForm::Policy, ops::LinearPolicy::A16Only},
+        Invocation{4, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{8, CallForm::Policy, ops::LinearPolicy::A16Only},
         Invocation{16, CallForm::Policy, ops::LinearPolicy::A16Only},
         Invocation{20, CallForm::Policy, ops::LinearPolicy::A16Only},
@@ -22,7 +22,7 @@ int run_nvfp4_a16() {
     };
     constexpr std::array new_problem_invocations{
         Invocation{1, CallForm::Policy, ops::LinearPolicy::A16Only},
-        Invocation{4, CallForm::Policy, ops::LinearPolicy::A16Only},
+        Invocation{4, CallForm::Policy, ops::LinearPolicy::AllowA8},
         Invocation{16, CallForm::Policy, ops::LinearPolicy::A16Only},
     };
     int failures = 0;

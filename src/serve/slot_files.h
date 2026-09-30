@@ -1,9 +1,9 @@
 #pragma once
 
-// Filename policy for /slots session persistence. Clients name snapshot files; the server
-// confines them to the --slot-save-path directory, so names are a single conservative path
-// component rather than a path.
+// Clients name snapshot files, but every file must remain a direct child of
+// --slot-save-path. Keep the accepted language deliberately narrower than a path.
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,17 +12,16 @@ namespace ninfer::serve {
 
 inline constexpr std::size_t kSlotFilenameMaxBytes = 128;
 
-// Returns the validated filename, or nullopt when the name is empty, too long, dot-leading, or
-// holds anything outside [A-Za-z0-9._-]. Rejecting a leading dot removes "..", ".", and hidden
-// files in one rule; the allowlist keeps every separator out.
 [[nodiscard]] inline std::optional<std::string> sanitize_slot_filename(std::string_view name) {
     if (name.empty() || name.size() > kSlotFilenameMaxBytes || name.front() == '.') {
         return std::nullopt;
     }
-    for (const char c : name) {
-        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                        (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
-        if (!ok) { return std::nullopt; }
+    for (const char value : name) {
+        const bool accepted = (value >= 'a' && value <= 'z') ||
+                              (value >= 'A' && value <= 'Z') ||
+                              (value >= '0' && value <= '9') || value == '.' || value == '_' ||
+                              value == '-';
+        if (!accepted) { return std::nullopt; }
     }
     return std::string(name);
 }

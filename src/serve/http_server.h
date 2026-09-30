@@ -103,13 +103,9 @@ private:
     ServeOptions options_;
     std::string public_model_id_;
     OpenAIResponsesStore openai_responses_store_;
-    ServeMetrics metrics_;
-    // Fork-local: the slot routes are ours and have no OperationalLog equivalent, so they
-    // log through the raw logger. Declared before operational_log_ to keep the member
-    // initialisation order matching the declaration order.
-    std::shared_ptr<spdlog::logger> logger_;
     OperationalLog operational_log_;
     JsonlRequestLog request_jsonl_;
+    ServeMetrics metrics_;
     httplib::Server server_;
     std::atomic<std::uint64_t> request_seq_{0};
     std::mutex stats_mutex_;

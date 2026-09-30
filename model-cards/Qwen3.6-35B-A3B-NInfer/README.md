@@ -75,28 +75,28 @@ Its optional DFlash companion weights come from
 | Field | Value |
 |---|---|
 | Filename | `qwen3_6_35b_a3b.ninfer` |
-| Size | 22,783,246,080 bytes (21.22 GiB) |
-| SHA-256 | `1fb9ea0b5b8561e49d9604115ec89e5d9f2b6f6434e32c37c57fffd480a325d2` |
-| Container version | 2 |
-| NInfer model ID | `qwen3.6-35b-a3b` |
-| NInfer weights ID | `groupwise-int` |
-| NInfer target key | `qwen3_6_35b_a3b` |
+| Size | 22,790,483,712 bytes (21.23 GiB) |
+| SHA-256 | `3ca1c5d0f2fe26cf28dea7bf7752f2d1a7decb156b98bcc630835398e0dbfaea` |
+| Container version | 3 |
+| Architecture | `Qwen3_5MoeForCausalLM` |
+| Public model name | `qwen3.6-35b-a3b` |
 
-The file contains the registered Text, Vision, MTP, proposal-head, DFlash, tokenizer,
-chat-template, generation, and media-processor objects required by NInfer.
+The file contains Text, Vision, MTP, DFlash, the optimized proposal head and frontend resources.
+Routed experts use Q4 gate/up and Q5/Q6 down weights; shared experts and mixer projections use Q8.
+Vision and speculative weights are loaded only when selected at startup.
 
 Verify a downloaded file with:
 
 ```bash
 printf '%s  %s\n' \
-  '1fb9ea0b5b8561e49d9604115ec89e5d9f2b6f6434e32c37c57fffd480a325d2' \
+  '3ca1c5d0f2fe26cf28dea7bf7752f2d1a7decb156b98bcc630835398e0dbfaea' \
   'qwen3_6_35b_a3b.ninfer' | sha256sum --check
 ```
 
 ## Requirements
 
 - [NInfer](https://github.com/Neroued/ninfer) revision
-  [`bd265a3`](https://github.com/Neroued/ninfer/commit/bd265a36fe990475bae143d2073d6a6cf67d0da3)
+  [`04350ba`](https://github.com/Neroued/ninfer/commit/04350ba94c203833598ba1a41943031c468208f1)
   or later, built from source;
 - 64-bit Linux;
 - NVIDIA GeForce RTX 5090 (`sm_120a`);
@@ -287,8 +287,6 @@ These are single-sample results under the stated NInfer evaluation profile, not 
 
 ## Limits
 
-- The artifact is accepted only by NInfer revision `bd265a3` or later and the matching registered
-  target.
 - NInfer executes on one RTX 5090 and one CUDA device, with a startup-fixed capacity of 1–8 active
   requests per Engine.
 - It does not provide large-scale or preemptive continuous batching, priority/QoS scheduling,
@@ -304,15 +302,14 @@ These are single-sample results under the stated NInfer evaluation profile, not 
 | Base source revision | `995ad96eacd98c81ed38be0c5b274b04031597b0` |
 | DFlash source repository | [z-lab/Qwen3.6-35B-A3B-DFlash](https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash) |
 | DFlash source revision | [`f181eece646affea2c38b2765f1aaa01a9734ccd`](https://huggingface.co/z-lab/Qwen3.6-35B-A3B-DFlash/tree/f181eece646affea2c38b2765f1aaa01a9734ccd) |
-| Conversion recipe | `qwen3_6_35b_a3b-v2` |
+| Conversion recipe | `qwen3_6_35b_a3b` |
 | Converter repository | `https://github.com/Neroued/ninfer` |
-| Converter revision | `872b9792b4f43244e38faca5cded79136eca5666` |
-| Minimum runtime revision | `bd265a36fe990475bae143d2073d6a6cf67d0da3` |
+| Minimum runtime revision | `04350ba94c203833598ba1a41943031c468208f1` |
 
 The artifact identity, summarized object inventory, and conversion provenance are published in
 [`artifact-manifest.json`](https://huggingface.co/neroued/Qwen3.6-35B-A3B-NInfer/blob/main/artifact-manifest.json).
 The exact storage contract is maintained in the
-[Qwen3.6-35B-A3B artifact reference](https://github.com/Neroued/ninfer/blob/master/docs/maintainer/qwen3.6-35b-a3b-artifact.md).
+[v3 container reference](https://github.com/Neroued/ninfer/blob/master/docs/maintainer/artifact-container.md).
 
 ## License
 

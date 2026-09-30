@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/q6/q6_dispatch.h"
 
 #include <stdexcept>
@@ -66,9 +67,8 @@ Q6Launch select_q6_launch(std::int32_t n, std::int32_t k, std::int32_t t, Linear
     switch (policy) {
     case LinearPolicy::A16Only:
     case LinearPolicy::AllowA8:
-        return select_q6_a16_launch(n, k, t);
     case LinearPolicy::AllowA4:
-        break;
+        return select_q6_a16_launch(n, k, t);
     }
     throw std::invalid_argument("q6 linear: unsupported policy");
 }

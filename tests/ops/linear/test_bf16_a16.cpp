@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ninfer/ops/linear.h"
 
 #include "core/decode_graph.h"
@@ -179,7 +180,7 @@ int run_selector_linear() {
     int failures   = 0;
     const auto run = [&](int tokens, bool replay) {
         const auto capacity = ops::linear_workspace_capacity_bytes(
-            QType::BF16_CTRL, n, k, ops::LinearPolicy::A16Only, tokens, tokens);
+            QType::BF16, n, k, ops::LinearPolicy::A16Only, tokens, tokens);
         DeviceArena scratch(std::max<std::size_t>(capacity, 256));
         GuardedDeviceBuffer output_buffer(static_cast<std::size_t>(n) * tokens * 2);
         Tensor x(input.p, DType::BF16, {k, tokens});

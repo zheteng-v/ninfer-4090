@@ -11,6 +11,12 @@ The downstream product is a native Linux NInfer server for one `sm_89` RTX 4090 
 VRAM. Its production workload is Qwen3.8-27B groupwise-int, long context, one or two active
 requests, Vision, OpenAI/Anthropic-compatible APIs, and MTP3 speculative decoding.
 
+Its mission is to preserve the original NInfer author's direction while extending it into the best
+practical inference platform a 48 GiB RTX 4090 can provide. Upstream architecture and model support
+lead; this downstream contributes Ada-safe dispatch, kernels, memory policy, deployment profiles,
+and reproducible evidence. Work should benefit the wider 48 GiB 4090 community and remain easy for
+upstream or neighboring ports to review, reproduce, and reuse.
+
 The priorities, in order, are:
 
 1. preserve answer correctness, API contracts, and recoverable production service;
@@ -37,18 +43,22 @@ be committed.
 
 Branch roles:
 
-- `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. It currently preserves
-  the proven v2/sm89 line.
-- `sync/YYYY-MM-DD-upstream-v3`: temporary integration branch created from the audited
-  `upstream/master`, not from the old downstream. Ada support is replayed as small reviewed commits.
+- `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. The tagged
+  `v2-sm89-production-2026-09-30` line remains the rollback source while the v3 release candidate
+  completes canary deployment.
+- `sync/YYYY-MM-DD-v3-sm89`: temporary integration branch based on the last validated Ada line,
+  with the upstream v3 architecture replayed in its original commit order and conflicts reviewed.
 - `perf/<topic>`, `fix/<topic>`, `feat/<topic>`: one bounded decision per branch.
 - `vendor/sergiuszm-rtx4090-port`: optional read-only mirror of the observed vendor head. No local
   work starts from this name without a fresh audit.
 
 Do not merge `upstream/master` wholesale into the current v2 line. At the 2026-09-30 baseline the
-two sides have both rewritten core artifact/model/runtime code. The sustainable migration is a
-clean v3 line based on upstream plus explicit Ada ports. `main` remains the rollback line until the
-v3 candidate passes every release gate.
+two sides have both rewritten core artifact/model/runtime code. A direct sm89 build of the audited
+master was attempted and rejected: current master unconditionally reaches Hopper/Blackwell TMA,
+cluster barrier, block-scale MMA, and PDL instructions in multiple core paths. The active migration
+therefore starts from the validated Ada line and replays the upstream v3 converter, loader, and
+bound-instance Engine milestones before selectively adopting later work. `main` remains the
+rollback line until the v3 candidate passes every release gate.
 
 ## Mandatory iteration start
 
@@ -99,6 +109,13 @@ attributed; they are not copied merely because a headline reports a speedup.
 
 The candidate is not deployable until all applicable rows pass on the physical RTX 4090.
 
+Routine iterations use a deliberately smaller fast gate so upstream synchronization remains
+frequent: a Release `sm_89` incremental build, focused changed-area tests, real-artifact host bind,
+one short no-speculation request, and MTP3 short plus medium-prefill requests. Record TTFT, prefill,
+decode, MTP acceptance, and resident VRAM. The full matrix below is reserved for release candidates,
+kernel/numerical changes, long-context changes, or a result used in a public performance claim.
+Passing the fast gate does not authorize replacing `main` or the production profile.
+
 | Gate | Minimum evidence |
 |---|---|
 | Build | clean Release build for `sm_89`; no accidental `sm_120a` requirement; reproducible compiler/CUDA record |
@@ -145,13 +162,14 @@ reports intended for the community.
 - [x] establish the downstream repository without discarding the original target-repository history;
 - [x] configure explicit `origin`, `upstream`, and `sergiuszm` roles;
 - [x] add the repeatable upstream/PR audit;
-- [ ] tag the last validated v2 production commit after a clean rebuild and smoke run;
-- [ ] export a scrubbed machine-readable baseline and exact benchmark commands.
+- [x] tag the last validated v2 production commit after a clean rebuild and smoke run;
+- [x] export a scrubbed machine-readable baseline and exact benchmark commands.
 
 ### P1 — boot a minimal v3/sm89 candidate
 
-Create `sync/YYYY-MM-DD-upstream-v3` from the audited `upstream/master`. Port only what is necessary
-to compile and load on Ada:
+Create `sync/YYYY-MM-DD-v3-sm89` from the audited `sergiuszm/rtx4090-port` and replay the upstream
+v3 architecture milestones in dependency order. Port only what is necessary to compile and load
+on Ada:
 
 1. CMake/CUDA architecture admission for `sm_89` and runtime capability reporting;
 2. groupwise Q4/Q5/Q6/Q8 and BF16/INT8 paths already meaningful on Ada;
@@ -163,12 +181,92 @@ to compile and load on Ada:
 Acceptance: clean build, artifact tests, exact short-answer probe, and no unsupported Blackwell path
 selected. This milestone is correctness-only; no performance claim is allowed.
 
+Status on 2026-09-30:
+
+- [x] upstream v3 converter (`168fdd81`), loader (`4cde7ad0`), and bound-instance Engine
+  (`04350ba9`) integrated with authorship preserved;
+- [x] complete Release build for `sm_89` using CUDA 13.1 and GCC 14, including `ninfer`,
+  `ninfer-serve`, and `ninfer-perplexity`;
+- [x] artifact reader, materializer, writer interop, Qwen3.5 loader, and Qwen3.5 frontend
+  component tests pass;
+- [x] the official 20,437,521,664-byte `qwen3_8_27b_v3.ninfer` parses as artifact v3 and host-binds
+  Text (17,093,490,688 device bytes), MTP (17,544,758,272), DFlash2 (19,320,283,648), and Vision
+  (17,389,210,112); SHA-256 is
+  `81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da`;
+- [x] NVFP4/K8V4 runtime KV selections fail early on sm89 instead of reaching stub kernels;
+- [x] cold device materialization succeeds at the production-shaped 262,144-token INT8 KV capacity;
+- [x] real streaming requests pass with no speculation and MTP3, including a 5,891-token
+  medium-prefill request; see
+  [the fast-gate report](2026-09-30-v3-sm89-fast-gate.md).
+
+The official v3 artifact carries NInfer's maintained Qwen3.8 chat template while its tokenizer
+configuration retains the Hugging Face compatibility template. The temporary exact-hash bridge
+used for the first boot has now been superseded by upstream's generic Jinja executor, imported with
+its vendored source base and literal-content fix. Six reference-template comparisons against
+Jinja2 pass, and the real artifact passes text, tool-call, Vision, and two-lane runtime probes. See
+[the generic-Jinja fast-gate report](2026-09-30-generic-jinja-fast-gate.md).
+
 ### P2 — restore the production feature envelope
 
 Port or redesign, in order: INT8 KV, paged long context, MTP3, state/prefix persistence, OpenAI and
 Anthropic serving, Vision, E8 only if it still buys useful capacity, then DFlash2 as a research path.
 Run the full release gates after each subsystem. Upgrade the existing v2 artifact on a copy and keep
 the original immutable until v3 reaches production.
+
+The initial v3 baseline intentionally defers the fork-local disk session-slot persistence and its
+serve metrics. Their old implementation depended on deleted target-private Program types; they must
+be ported to the new model-independent Program contracts with new round-trip and eviction tests,
+not retained as declarations backed by incompatible state.
+
+The old v2-only `rk4v4-e8`/`k8v4` serve-option assertions and automatic-long-anchor CLI assertions
+were also removed from the v3 test target. They are not silently supported by the current v3
+runtime. Reintroducing either feature requires an explicit v3 implementation, help text, parser
+tests, runtime coverage, and a memory/correctness comparison against INT8 KV.
+
+Serving-envelope status on 2026-09-30:
+
+- [x] the repository's OpenAI Chat/Responses, Anthropic, stored-response continuation/deletion,
+  streaming, token-count, and Vision contract passes on the official v3 artifact;
+- [x] cancellation before and after first output releases transport and Engine capacity, and a
+  following probe completes;
+- [x] a blocked non-streaming request returns HTTP 503 `request_queue_timeout` at its configured
+  deadline;
+- [x] a short second-lane request completes during a long first-lane decode;
+- [x] production-compatible `/metrics` is restored on v3 using live Engine prefill/decode totals
+  and request-lifetime processing/deferred gauges;
+- [x] streaming disconnect and cancellation pass, followed by 20 consecutive mixed-protocol
+  contract cycles (160 requests) without an unexpected error or inconsistent result.
+
+See [the v3 serving fast-gate report](2026-09-30-v3-serving-fast-gate.md). The first disk
+session-slot increment is now complete: a deterministic, bounded, model-bound v3 snapshot container
+has its own magic, explicit little-endian layout, whole-image and per-section CRC64, and focused
+round-trip/corruption tests. Old `NINFSES1` images are deliberately rejected. Engine/Program state
+export/import, atomic file publication, Serve routes, and restart/eviction tests were still open at
+that stage. The second increment defines the complete Qwen3.5 staging image, preserves checkpoint StateImage
+aliases, binds physical State/KV layouts, recomputes prefix digests, and validates all data before
+live Program mutation. See [the container report](2026-09-30-v3-snapshot-format.md) and
+[the Program staging-image report](2026-09-30-v3-program-staging-image.md). The third increment
+adds stable-boundary physical export from a catalogued continuation without allocating replicas or
+changing Program state. It preserves StateImage aliases and canonicalizes mixed Host/Device KV in
+logical order. The fourth increment adds transactional physical import: it validates before
+mutation, reserves every State/KV destination before transfer, publishes through a non-throwing
+tail, and rolls failed imports back without changing the catalog or resource revision. The fifth
+increment adds bounded crash-durable file publication and restores Engine save/restore/erase/list
+plus eviction auto-save. Replacement failures roll the resident continuation back, and a real v3
+artifact passed save/delete/restore, corruption, eviction, and fresh-Engine restore gates. Serve
+save/restore/erase/list routes, schema tests, restart restore, and full-catalog replacement pressure
+now pass. See
+[the Program physical-export report](2026-09-30-v3-program-physical-export.md) and
+[the Program physical-import report](2026-09-30-v3-program-physical-import.md), then
+[the durable Engine-slot report](2026-09-30-v3-durable-session-slots.md).
+
+The complete release-candidate evidence and exact commands are recorded in
+[the v3/sm89 release report](2026-10-01-v3-sm89-release.md), with a scrubbed machine-readable
+companion at [`docs/performance/data/v3-sm89-release-2026-10-01.json`](../performance/data/v3-sm89-release-2026-10-01.json).
+The main operational caveat is explicit: two long prompts fit in the dual 200K profile, but the
+current non-preemptive scheduler admits their long prefill phases serially. The production profile
+therefore uses a 600-second pending timeout; `max-concurrency=2` describes two resident lanes and
+decode isolation, not parallel long-prefill throughput.
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -205,12 +303,24 @@ prefill, alternative KV codecs, or larger speculative windows enter the tourname
 The vendor and upstream master diverge after `d4929686`: the vendor has 150 unique commits and
 upstream master has 83. Important upstream milestones include `168fdd81` (v3 converter),
 `4cde7ad0` (v3 loader), `04350ba9` (v3 bound model parameters), and `469f014c` (offline-upgrade
-guidance). This scale of divergence is why P1 starts from upstream rather than merging into v2.
+guidance). The first direct-master compile established that later master kernels are not a usable
+Ada baseline; P1 instead replays these architecture milestones onto the proven sm89 line.
 
 PRs to watch from this audit include Neroued #292 (reported Q5 small-batch/MTP3 gain), #297
 (workspace overflow state), #294 (structured output with speculation), #274 (shared-prefix catalog),
 #273 (RMSNorm/RoPE routing), and sergiuszm #10 (Windows sm89). All were open when audited; none is
 approved for downstream use without review and local evidence.
+
+A second audit immediately before the generic-Jinja iteration found the same immutable heads:
+`upstream/master@d44ab584`, `upstream/dev@75a89050`, and
+`sergiuszm/rtx4090-port@aeeba414`. No newer upstream commit was present to supersede the selected
+Jinja sequence.
+
+The serving-gate iteration repeated the audit at `fe500520` and observed the same three heads.
+Neroued PR #299 (duplicate tool-call parameters) is classified `watch`: it changes frontend parse
+policy and needs a focused correctness fixture before adoption. The existing production metrics
+series (`4277f14b`, `656b0df7`, `25297d06`) was classified `adapt` and ported to v3's EngineCore and
+request-lifetime ownership.
 
 ## Append-only sync record
 
@@ -220,3 +330,11 @@ release rather than creating a second roadmap.
 | Date | Downstream result | Neroued head | sergiuszm head | Decision and evidence |
 |---|---|---|---|---|
 | 2026-09-30 | maintenance baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | established two-track v2 production/v3 migration policy; no unvalidated code merge |
+| 2026-09-30 | v3/sm89 integration baseline | `d44ab584` (`dev` `75a89050`) | `aeeba414` | adopted v3 converter/loader/Engine milestones on the proven Ada base; full Release build and focused component tests pass; official v3 artifact host-binds Text/MTP/DFlash2/Vision; device execution and session-slot port remain open |
+| 2026-09-30 | v3/sm89 device fast gate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | official v3 artifact boots at 262K INT8 on the 48 GiB 4090; no-spec and MTP3 text pass; MTP3 reaches 110.6 tok/s short decode and 2.14k tok/s medium prefill; production v2 restored after canary |
+| 2026-09-30 | v3 session snapshot container | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined a portable, model-bound, checksummed v3 container and passed focused round-trip/corruption gates; old `NINFSES1` images are rejected; Program export/import and disk publication remain open |
+| 2026-09-30 | v3 Qwen3.5 Program staging image | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined alias-aware State/KV/identity/checkpoint sections and a fully owned pre-publication validation gate; host-only round-trip and negative tests pass, including DFlash2 without paged Backend KV; physical Program store capture/publish remains open |
+| 2026-09-30 | v3 Qwen3.5 Program physical export | `d44ab584` (`dev` `75a89050`) | `aeeba414` | exported catalogued continuations at a stable Program boundary, preserving State aliases and logical KV order across mixed Host/Device placement without residency mutation; PR #335 classified watch/benchmark-first; physical import and publication remain open |
+| 2026-09-30 | v3 Qwen3.5 Program physical import | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored validated continuations through fully reserved State/KV destinations and a non-throwing publication tail; focused H2D round-trip and rollback gates pass; PR #335 remains watch/benchmark-first; durable files and Engine methods remain open |
+| 2026-09-30 | v3 durable Engine session slots | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored crash-durable save/restore/erase/list and guarded eviction auto-save; host contracts and one real-artifact fresh-Engine round-trip pass; Serve routes remain open |
+| 2026-10-01 | v3/sm89 release candidate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | clean Release sm89 build; all 127 CTest entries pass or skip only unsupported/real-artifact fixtures; compatible real-artifact gates, 8K/64K/128K/256K exact NIAH, cancellation, durable slots, Vision and 20-cycle mixed protocol soak pass; v2 rollback tagged; long-prefill serialization and roughly 9.5-minute CUDA Graph startup retained as documented operational limits |

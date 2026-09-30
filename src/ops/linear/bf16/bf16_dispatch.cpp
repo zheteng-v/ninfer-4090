@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/linear/bf16/bf16_dispatch.h"
 
 #include "ops/linear/bf16/bf16_config.h"
@@ -26,10 +27,9 @@ Bf16Launch select_bf16_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t
 Bf16Launch select_bf16_launch(std::int32_t n, std::int32_t k, std::int32_t t, LinearPolicy policy) {
     switch (policy) {
     case LinearPolicy::A16Only:
-        return select_bf16_a16_launch(n, k, t);
     case LinearPolicy::AllowA8:
     case LinearPolicy::AllowA4:
-        break;
+        return select_bf16_a16_launch(n, k, t);
     }
     throw std::invalid_argument("bf16 linear: unsupported policy");
 }

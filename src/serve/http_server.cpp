@@ -1,20 +1,18 @@
 #include "serve/http_server.h"
 
-#include <spdlog/logger.h>
-
 #include "serve/anthropic_messages.h"
 #include "serve/http_transport.h"
 #include "serve/openai_common.h"
 #include "serve/request_log.h"
+#include "serve/slot_api.h"
 #include "serve/slot_files.h"
 
 #include <nlohmann/json.hpp>
 
 #include <chrono>
-#include <cstdio>
 #include <exception>
+#include <limits>
 #include <mutex>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -23,11 +21,6 @@
 namespace ninfer::serve {
 namespace {
 
-std::string format_seconds(double seconds) {
-    char text[32];
-    std::snprintf(text, sizeof(text), "%.2f", seconds);
-    return text;
-}
 void write_exception(httplib::Response& res, const std::exception& ex) {
     ApiError error;
     error.status  = 500;
@@ -226,7 +219,7 @@ bool matches_bearer_credential(std::string_view authorization, std::string_view 
 HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> logger)
     : options_(std::move(options)), openai_responses_store_(options_.response_store_max_records,
                                                             options_.response_store_max_bytes),
-      logger_(logger), operational_log_(logger),
+      operational_log_(logger),
       request_jsonl_(options_.request_log_jsonl, options_.artifact_path, std::move(logger)) {
     const std::size_t queued_requests =
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests;
@@ -278,8 +271,8 @@ void HttpServer::record_request_rejected(const RequestRejectionLogContext& conte
 void HttpServer::record_request_done(const RequestLogContext& context,
                                      const GenerationOutcome& outcome) {
     request_jsonl_.write_request_done(context, outcome);
-    metrics_.record(outcome);
     operational_log_.request_done(context, outcome);
+    metrics_.record(outcome);
 }
 
 void HttpServer::record_request_failure(const RequestLogContext& context,
@@ -436,63 +429,34 @@ void HttpServer::register_routes() {
             }
         });
 
-    // Readiness and liveness in one answer. Before the service attaches (model still loading)
-    // and after a latched engine failure the server answers 503, so a supervisor, load balancer
-    // or fleet dashboard never routes to an instance that cannot serve. A latched failure is
-    // permanent - every request then returns 503 "inference engine is unavailable" and only a
-    // restart recovers - so a hardcoded ok here would hide exactly that state.
     server_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
-        const bool available =
-            service_ != nullptr && service_->is_available() && service_->healthy();
-        res.status = available ? 200 : 503;
+        const bool available = service_ != nullptr && service_->is_available();
+        res.status           = available ? 200 : 503;
         res.set_content(nlohmann::json{{"status", available ? "ok" : "unavailable"}}.dump(),
                         "application/json");
     });
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
+        const std::vector<ninfer::SlotState> slots =
+            service_ != nullptr ? service_->slot_states() : std::vector<ninfer::SlotState>{};
         res.set_content(metrics_.render(options_.max_concurrency,
                                         service_ != nullptr ? service_->runtime_stats()
                                                             : ninfer::RuntimeStats{},
-                                        service_ != nullptr ? service_->active_request_count() : 0),
+                                        service_ != nullptr ? service_->active_request_count() : 0,
+                                        slots),
                         "text/plain; version=0.0.4");
     });
-    // llama.cpp-shaped slot detail, read from the Engine's continuation catalog: one slot per
-    // private catalog cell. A cell claimed by a running request reports that request's prompt
-    // and reused-prefix sizes; a retained cell reports the resident session's depth (as both
-    // tokens and cache, matching llama.cpp's retained slot) plus its identifying
-    // `session_digest`. Before the service attaches (model still loading) every slot reads
-    // idle.
     server_.Get("/slots", [this](const httplib::Request&, httplib::Response& res) {
-        const bool speculative =
-            options_.speculative.backend != ninfer::SpeculativeBackend::None;
         std::vector<ninfer::SlotState> states;
         std::uint32_t slot_count = options_.max_concurrency;
         if (service_ != nullptr) {
             states     = service_->slot_states();
-            slot_count = service_->slot_count();
+            slot_count = static_cast<std::uint32_t>(states.size());
         }
-        nlohmann::json slots = nlohmann::json::array();
-        for (std::uint32_t i = 0; i < slot_count; ++i) {
-            const ninfer::SlotState state =
-                i < states.size() ? states[i] : ninfer::SlotState{};
-            nlohmann::json checkpoints = nlohmann::json::array();
-            for (const ninfer::SlotCheckpoint& checkpoint : state.checkpoints) {
-                checkpoints.push_back({{"frontier", checkpoint.frontier},
-                                       {"session_digest", checkpoint.session_digest}});
-            }
-            slots.push_back({{"id", i},
-                             {"is_processing", state.processing},
-                             {"retained", state.retained},
-                             {"session_digest", state.session_digest},
-                             {"checkpoints", std::move(checkpoints)},
-                             {"n_ctx", options_.max_context},
-                             {"n_prompt_tokens", state.prompt_tokens},
-                             {"n_prompt_tokens_cache", state.cached_tokens},
-                             {"speculative", speculative}});
-        }
-        res.set_content(slots.dump(), "application/json");
+        res.set_content(make_slots_body(
+                            states, slot_count, options_.max_context,
+                            options_.speculative.backend != ninfer::SpeculativeBackend::None),
+                        "application/json");
     });
-    // llama.cpp-shaped session persistence: POST /slots/{id}?action=save|restore|erase with
-    // {"filename": NAME}. Enabled only by --slot-save-path.
     server_.Post(R"(/slots/(\d+))", [this](const httplib::Request& req, httplib::Response& res) {
         handle_slot_action(req, res);
     });
@@ -565,86 +529,90 @@ void HttpServer::handle_model(const httplib::Request& req, httplib::Response& re
 }
 
 void HttpServer::handle_slot_action(const httplib::Request& req, httplib::Response& res) {
-    const auto fail = [&res](int status, std::string code, std::string message) {
-        ApiError error;
-        error.status  = status;
-        error.type    = status >= 500 ? "server_error" : "invalid_request_error";
-        error.code    = std::move(code);
-        error.message = std::move(message);
-        write_openai_error(res, error);
+    const auto fail = [&res](SlotApiFailure failure, std::string message,
+                             std::string_view action = {}) {
+        write_openai_error(res, make_slot_api_error(failure, std::move(message), action));
     };
     if (options_.slot_save_path.empty()) {
-        fail(501, "slot_persistence_disabled",
-             "this server was started without --slot-save-path; slot save/restore is disabled");
+        fail(SlotApiFailure::PersistenceDisabled,
+             "this server was started without --slot-save-path; slot persistence is disabled");
         return;
     }
+    if (service_ == nullptr) {
+        fail(SlotApiFailure::ServiceUnavailable, "inference service is not attached");
+        return;
+    }
+
     const std::string id_text = req.matches.size() > 1 ? req.matches[1].str() : std::string();
     std::uint32_t slot        = 0;
     try {
-        slot = static_cast<std::uint32_t>(std::stoul(id_text));
+        std::size_t parsed = 0;
+        const unsigned long long value = std::stoull(id_text, &parsed);
+        if (parsed != id_text.size() || value > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::out_of_range("slot id");
+        }
+        slot = static_cast<std::uint32_t>(value);
     } catch (const std::exception&) {
-        fail(400, "invalid_slot", "slot id is not a number");
+        fail(SlotApiFailure::InvalidSlot, "slot id is not a valid unsigned integer");
         return;
     }
-    const std::uint32_t slot_count =
-        service_ != nullptr ? service_->slot_count() : options_.max_concurrency;
+    const std::uint32_t slot_count = service_->slot_count();
     if (slot >= slot_count) {
-        fail(400, "invalid_slot",
+        fail(SlotApiFailure::InvalidSlot,
              "slot " + id_text + " is outside this server's " + std::to_string(slot_count) +
                  " slots");
         return;
     }
-    const std::string action = req.get_param_value("action");
 
-    // Body: {"filename": NAME} for save/restore, plus optional {"if_digest": DIGEST} on save
-    // and erase - a precondition that the slot still holds the session the client means,
-    // checked atomically with the operation (mismatch = 409 slot_session_mismatch).
+    const std::string action = req.get_param_value("action");
+    const bool is_save       = action == "save";
+    const bool is_restore    = action == "restore";
+    const bool is_erase      = action == "erase";
+    if (!is_save && !is_restore && !is_erase) {
+        fail(SlotApiFailure::InvalidAction, "action must be save, restore, or erase");
+        return;
+    }
+    const SlotMetricAction metric_action =
+        is_save ? SlotMetricAction::Save
+                : (is_restore ? SlotMetricAction::Restore : SlotMetricAction::Erase);
+
     std::string filename;
-    std::string if_digest;
+    std::string expected_digest;
     try {
         const nlohmann::json body =
             req.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(req.body);
-        filename  = body.value("filename", std::string());
-        if_digest = body.value("if_digest", std::string());
+        filename        = body.value("filename", std::string());
+        expected_digest = body.value("if_digest", std::string());
     } catch (const std::exception&) {
-        fail(400, "invalid_request", "request body is not valid JSON");
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::InvalidRequest, "request body is not valid slot-operation JSON");
         return;
     }
-
-    if (action == "erase") {
-        try {
-            const std::uint32_t erased = service_->slot_erase(slot, if_digest);
-            logger_->info("{}", "slot erase id=" + id_text + " n_erased=" + std::to_string(erased));
-            res.set_content(nlohmann::json{{"id_slot", slot}, {"n_erased", erased}}.dump(),
-                            "application/json");
-        } catch (const ninfer::RequestError& engine_error) {
-            fail(409, "slot_busy", engine_error.what());
-        } catch (const ninfer::SlotSessionMismatch& mismatch) {
-            fail(409, "slot_session_mismatch", mismatch.what());
-        }
-        return;
-    }
-    if (action != "save" && action != "restore") {
-        fail(400, "invalid_action", "action must be save, restore, or erase");
-        return;
-    }
-    const std::optional<std::string> sanitized = sanitize_slot_filename(filename);
-    if (!sanitized) {
-        fail(400, "invalid_filename",
-             "filename must be 1-" + std::to_string(kSlotFilenameMaxBytes) +
-                 " chars of [A-Za-z0-9._-] and must not start with a dot");
-        return;
-    }
-    const std::string path = options_.slot_save_path + "/" + *sanitized;
 
     try {
-        if (action == "save") {
-            const ninfer::SlotSaveResult saved = service_->slot_save(slot, path, if_digest);
-            logger_->info("{}", "slot save id=" + id_text + " file=" + *sanitized +
-                     " n_saved=" + std::to_string(saved.tokens) +
-                     " n_written=" + std::to_string(saved.bytes) +
-                     " session=" + saved.session_digest + " in " +
-                     format_seconds(saved.seconds) + " s");
+        if (is_erase) {
+            const std::uint32_t erased = service_->slot_erase(slot, expected_digest);
+            metrics_.record_slot_action(metric_action, true);
+            operational_log_.slot_erased(slot, erased);
+            res.set_content(nlohmann::json{{"id_slot", slot}, {"n_erased", erased}}.dump(),
+                            "application/json");
+            return;
+        }
+
+        const std::optional<std::string> sanitized = sanitize_slot_filename(filename);
+        if (!sanitized) {
+            metrics_.record_slot_action(metric_action, false);
+            fail(SlotApiFailure::InvalidFilename,
+                 "filename must be 1-" + std::to_string(kSlotFilenameMaxBytes) +
+                     " characters of [A-Za-z0-9._-] and must not start with a dot");
+            return;
+        }
+        const std::string path = (options_.slot_save_path / *sanitized).string();
+        if (is_save) {
+            const ninfer::SlotSaveResult saved =
+                service_->slot_save(slot, path, expected_digest);
+            metrics_.record_slot_action(metric_action, true);
+            operational_log_.slot_saved(slot, *sanitized, saved);
             res.set_content(
                 nlohmann::json{{"id_slot", slot},
                                {"filename", *sanitized},
@@ -656,11 +624,8 @@ void HttpServer::handle_slot_action(const httplib::Request& req, httplib::Respon
                 "application/json");
         } else {
             const ninfer::SlotRestoreResult restored = service_->slot_restore(slot, path);
-            logger_->info("{}", "slot restore id=" + id_text + " file=" + *sanitized +
-                     " n_restored=" + std::to_string(restored.tokens) +
-                     " n_read=" + std::to_string(restored.bytes) +
-                     " session=" + restored.session_digest + " in " +
-                     format_seconds(restored.seconds) + " s");
+            metrics_.record_slot_action(metric_action, true);
+            operational_log_.slot_restored(slot, *sanitized, restored);
             res.set_content(
                 nlohmann::json{{"id_slot", slot},
                                {"filename", *sanitized},
@@ -671,12 +636,18 @@ void HttpServer::handle_slot_action(const httplib::Request& req, httplib::Respon
                     .dump(),
                 "application/json");
         }
-    } catch (const ninfer::RequestError& engine_error) {
-        fail(409, "slot_busy", engine_error.what());
-    } catch (const ninfer::SlotSessionMismatch& mismatch) {
-        fail(409, "slot_session_mismatch", mismatch.what());
-    } catch (const std::invalid_argument& engine_error) {
-        fail(400, "slot_" + action + "_failed", engine_error.what());
+    } catch (const ninfer::RequestError& error) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::Busy, error.what());
+    } catch (const ninfer::SlotSessionMismatch& error) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::SessionMismatch, error.what());
+    } catch (const std::invalid_argument& error) {
+        metrics_.record_slot_action(metric_action, false);
+        fail(SlotApiFailure::OperationFailed, error.what(), action);
+    } catch (...) {
+        metrics_.record_slot_action(metric_action, false);
+        throw;
     }
 }
 
@@ -687,7 +658,7 @@ void HttpServer::attach(GenerationService& service) {
         throw std::logic_error("HTTP generation service is already attached");
     }
     const ninfer::LoadSummary load = service.load_summary();
-    public_model_id_               = resolve_public_model_id(options_, load.model_id);
+    public_model_id_               = resolve_public_model_id(options_, load.model_name);
     service_                       = &service;
     request_jsonl_.write_server_start(options_, service.engine_options(),
                                       service.sampling_defaults(), public_model_id_, load,

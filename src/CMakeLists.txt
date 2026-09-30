@@ -16,7 +16,7 @@ function(ninfer_cuda_archive target)
   target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 endfunction()
 
-# Device/tensor/layout/graph primitives and the model-independent request runtime.
+# Physical device, tensor, weight, layout and graph primitives.
 add_library(ninfer_core STATIC
   core/arena.cu
   core/device.cu
@@ -29,23 +29,41 @@ add_library(ninfer_core STATIC
   core/linear_attention_state.cpp
   core/layout.cpp
   core/tensor.cpp
-  core/decode_graph.cpp
-  runtime/engine/admission_policy.cpp
-  runtime/engine/context_cost.cpp
-  runtime/engine/context_cost_defaults.cpp
-  runtime/engine/kv_capacity.cpp
-  runtime/engine/public_types.cpp)
+  core/weight_view.cpp
+  core/decode_graph.cpp)
 ninfer_internal_includes(ninfer_core)
 ninfer_cuda_archive(ninfer_core)
-target_link_libraries(ninfer_core PUBLIC ${NINFER_CUDART_TARGET} CUDA::nvtx3)
+target_link_libraries(ninfer_core PUBLIC CUDA::cudart CUDA::nvtx3 Threads::Threads)
+
+add_library(ninfer_runtime_support STATIC
+  runtime/session_file.cpp
+  runtime/session_snapshot.cpp
+  runtime/engine/admission_policy.cpp
+  runtime/engine/context_cache/context_cost.cpp
+  runtime/engine/context_cache/context_cost_defaults.cpp
+  runtime/engine/kv_capacity.cpp
+  runtime/engine/public_types.cpp)
+ninfer_internal_includes(ninfer_runtime_support)
+target_link_libraries(ninfer_runtime_support PUBLIC ninfer_core)
+
+# Host-only Qwen continuation identity and persistence codec. Keeping this boundary independent
+# from execution kernels makes corruption/round-trip gates cheap enough to run on every change.
+add_library(ninfer_qwen3_5_session_image STATIC
+  models/qwen3_5/program/prefix_identity.cpp
+  models/qwen3_5/program/session_image.cpp)
+ninfer_internal_includes(ninfer_qwen3_5_session_image)
+target_link_libraries(ninfer_qwen3_5_session_image PUBLIC ninfer_runtime_support)
 
 # Generic .ninfer framing, binding, and direct final materialization.
 add_library(ninfer_artifact STATIC
+  artifact/schema.cpp
+  artifact/formats.cpp
+  artifact/layouts.cpp
+  artifact/file_io.cpp
   artifact/reader.cpp
-  artifact/storage_layouts.cpp
   artifact/binder.cpp
   artifact/materializer.cpp
-  artifact/typed_binding.cpp)
+  artifact/views.cpp)
 ninfer_internal_includes(ninfer_artifact)
 target_link_libraries(ninfer_artifact PUBLIC ninfer_core)
 
@@ -70,6 +88,7 @@ endif()
 # Shared mathematical Ops. The list is intentionally explicit: adding a
 # source is a build-boundary decision, not an accidental recursive-glob side effect.
 add_library(ninfer_ops STATIC
+  ops/weight_input.cpp
   ops/launcher/add_bias.cu
   ops/launcher/argmax.cu
   ops/launcher/cast.cu
@@ -147,12 +166,12 @@ add_library(ninfer_ops STATIC
   ops/attn_input_proj/q4_q5/q4_q5_attn_input_gemm_mma.cu
   ops/attn_input_proj/q4_q5/q4_q5_attn_input_small_t.cu
   ops/attn_input_proj/q4_q5/q4_q5_attn_input_plan.cpp
-  ops/attn_input_proj/w8/w8_attn_input_decode.cu
-  ops/attn_input_proj/w8/w8_attn_input_gemm_mma.cu
-  ops/attn_input_proj/w8/w8_attn_input_gemm_simt.cu
-  ops/attn_input_proj/w8/w8_attn_input_gemm_splitk.cu
-  ops/attn_input_proj/w8/w8_dflash2_attn_input.cu
-  ops/attn_input_proj/w8/w8_attn_input_plan.cpp
+  ops/attn_input_proj/q8/q8_attn_input_decode.cu
+  ops/attn_input_proj/q8/q8_attn_input_gemm_mma.cu
+  ops/attn_input_proj/q8/q8_attn_input_gemm_simt.cu
+  ops/attn_input_proj/q8/q8_attn_input_gemm_splitk.cu
+  ops/attn_input_proj/q8/q8_dflash2_attn_input.cu
+  ops/attn_input_proj/q8/q8_attn_input_plan.cpp
   ops/gdn_input_proj/fp8/fp8_gdn_input_decode.cu
   ops/gdn_input_proj/fp8/fp8_gdn_input_matrix.cu
   ops/gdn_input_proj/fp8/fp8_gdn_input_a8.cu
@@ -172,18 +191,18 @@ add_library(ninfer_ops STATIC
   ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_conv_snapshot.cu
   ops/gdn_input_proj/q4_q5/q4_q5_gdn_input_plan.cpp
   ops/gdn_input_proj/gdn_projected_conv.cu
-  ops/gdn_input_proj/w8/w8_gdn_input_decode.cu
-  ops/gdn_input_proj/w8/w8_gdn_input_gemm_mma.cu
-  ops/gdn_input_proj/w8/w8_gdn_input_gemm_splitk.cu
-  ops/gdn_input_proj/w8/w8_gdn_input_plan.cpp
+  ops/gdn_input_proj/q8/q8_gdn_input_decode.cu
+  ops/gdn_input_proj/q8/q8_gdn_input_gemm_mma.cu
+  ops/gdn_input_proj/q8/q8_gdn_input_gemm_splitk.cu
+  ops/gdn_input_proj/q8/q8_gdn_input_plan.cpp
   ops/gdn_gating_proj/bf16/bf16_gdn_norm_gating_proj_27.cu
   ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_kernels.cu
   ops/gdn_gating_proj/bf16/bf16_gdn_gating_proj_plan.cpp
   ops/dynamic_grouped_conv/bf16/bf16_dynamic_grouped_conv_prepare_partial.cu
   ops/dynamic_grouped_conv/bf16/bf16_dynamic_grouped_conv_prepare_reduce.cu
   ops/dynamic_grouped_conv/bf16/bf16_dynamic_grouped_conv_prepare_plan.cpp
-  ops/dynamic_grouped_conv/w8/w8_dynamic_grouped_conv_add_materialized.cu
-  ops/dynamic_grouped_conv/w8/w8_dynamic_grouped_conv_add_plan.cpp
+  ops/dynamic_grouped_conv/q8/q8_dynamic_grouped_conv_add_materialized.cu
+  ops/dynamic_grouped_conv/q8/q8_dynamic_grouped_conv_add_plan.cpp
   ops/linear/bf16/bf16_gemv.cu
   ops/linear/bf16/bf16_gemm_mma.cu
   ops/linear/bf16/bf16_n256_k5120.cu
@@ -226,10 +245,10 @@ add_library(ninfer_ops STATIC
   ops/linear_add/q5/q5_linear_add_gemm_simt.cu
   ops/linear_add/q5/q5_linear_add_gemv.cu
   ops/linear_add/q5/q5_linear_add_plan.cpp
-  ops/linear_add/w8/w8_linear_add_gemm_mma.cu
-  ops/linear_add/w8/w8_linear_add_gemm_simt.cu
-  ops/linear_add/w8/w8_linear_add_gemm_splitk.cu
-  ops/linear_add/w8/w8_linear_add_plan.cpp
+  ops/linear_add/q8/q8_linear_add_gemm_mma.cu
+  ops/linear_add/q8/q8_linear_add_gemm_simt.cu
+  ops/linear_add/q8/q8_linear_add_gemm_splitk.cu
+  ops/linear_add/q8/q8_linear_add_plan.cpp
   ops/linear_swiglu/q4/q4_linear_swiglu_gemm_mma.cu
   ops/linear_swiglu/q4/q4_linear_swiglu_gemv.cu
   ops/linear_swiglu/q4/q4_linear_swiglu_plan.cpp
@@ -241,29 +260,29 @@ add_library(ninfer_ops STATIC
   ops/linear_swiglu/fp8/fp8_linear_swiglu_small_t.cu
   ops/linear_swiglu/fp8/fp8_linear_swiglu_a8.cu
   ops/linear_swiglu/fp8/fp8_linear_swiglu_plan.cpp
-  ops/linear_swiglu/w8/w8_linear_swiglu_decode.cu
-  ops/linear_swiglu/w8/w8_dflash2_linear_swiglu.cu
-  ops/linear_swiglu/w8/w8_linear_swiglu_gemm_mma.cu
-  ops/linear_swiglu/w8/w8_linear_swiglu_gemm_splitk.cu
-  ops/linear_swiglu/w8/w8_linear_swiglu_plan.cpp
+  ops/linear_swiglu/q8/q8_linear_swiglu_decode.cu
+  ops/linear_swiglu/q8/q8_dflash2_linear_swiglu.cu
+  ops/linear_swiglu/q8/q8_linear_swiglu_gemm_mma.cu
+  ops/linear_swiglu/q8/q8_linear_swiglu_gemm_splitk.cu
+  ops/linear_swiglu/q8/q8_linear_swiglu_plan.cpp
   ops/linear/q6/q6_dispatch.cpp
   ops/linear/q6/q6_rowsplit_gemm_mma.cu
   ops/linear/q6/q6_rowsplit_gemm_simt.cu
-  ops/linear/w8/w8_feature.cu
-  ops/linear/w8/w8_rowsplit_gemm_mma.cu
-  ops/linear/w8/w8_rowsplit_gemm_simt.cu
-  ops/linear/w8/w8_rowsplit_gemm_decode.cu
-  ops/linear/w8/w8_small_t.cu
-  ops/linear/w8/w8_rowsplit_gemm_splitk.cu
-  ops/linear/w8/w8_dispatch.cpp
-  ops/linear_pair/w8/w8_pair_decode.cu
-  ops/linear_pair/w8/w8_pair_gemm_concat.cu
-  ops/linear_pair/w8/w8_pair_gemm_mma.cu
-  ops/linear_pair/w8/w8_pair_gemm_splitk.cu
-  ops/linear_pair/w8/w8_pair_plan.cpp
+  ops/linear/q8/q8_feature.cu
+  ops/linear/q8/q8_rowsplit_gemm_mma.cu
+  ops/linear/q8/q8_rowsplit_gemm_simt.cu
+  ops/linear/q8/q8_rowsplit_gemm_decode.cu
+  ops/linear/q8/q8_small_t.cu
+  ops/linear/q8/q8_rowsplit_gemm_splitk.cu
+  ops/linear/q8/q8_dispatch.cpp
+  ops/linear_pair/q8/q8_pair_decode.cu
+  ops/linear_pair/q8/q8_pair_gemm_concat.cu
+  ops/linear_pair/q8/q8_pair_gemm_mma.cu
+  ops/linear_pair/q8/q8_pair_gemm_splitk.cu
+  ops/linear_pair/q8/q8_pair_plan.cpp
   ops/linear_topk/linear_topk.cpp
-  ops/linear_topk/w8.cu
-  ops/linear_topk/w8_m64.cu
+  ops/linear_topk/q8.cu
+  ops/linear_topk/q8_m64.cu
   ops/linear_topk/fp8.cu
   ops/linear_topk/fp8_m64.cu
   ops/linear_topk/q4.cu
@@ -336,10 +355,82 @@ add_library(ninfer_text STATIC
 ninfer_internal_includes(ninfer_text)
 target_compile_definitions(ninfer_text PUBLIC UTF8PROC_STATIC)
 
+# Language evaluation reuses the engine's Unicode and JSON dependencies.
+target_sources(ninfer_jinja PRIVATE text/jinja.cpp)
+ninfer_internal_includes(ninfer_jinja)
+target_include_directories(ninfer_jinja PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
+target_link_libraries(ninfer_jinja PRIVATE ninfer_text ninfer::json)
+
+# Immutable model data and cold loading, independently buildable from Program and Engine.
+add_library(ninfer_model_loading STATIC
+  models/registry.cpp
+  models/qwen3_5/config.cpp
+  models/qwen3_5/model.cpp
+  models/qwen3_5/load.cpp
+  models/qwen3_5/load/text.cpp
+  models/qwen3_5/load/vision.cpp
+  models/qwen3_5/load/mtp.cpp
+  models/qwen3_5/load/dflash.cpp
+  models/qwen3_5/load/dflash2.cpp
+  models/qwen3_5/load/resources.cpp
+  models/qwen3_5/load/prepare.cpp
+  models/qwen3_5/frontend/resources.cpp
+  models/qwen3_5/frontend/tokenizer.cpp)
+ninfer_internal_includes(ninfer_model_loading)
+target_link_libraries(ninfer_model_loading PUBLIC ninfer_artifact ninfer_text ninfer_ops)
+
 add_library(ninfer_media_decode STATIC
   media/decode/decode.cpp)
 ninfer_internal_includes(ninfer_media_decode)
 target_link_libraries(ninfer_media_decode PRIVATE ${NINFER_FFMPEG_TARGET})
+
+add_library(ninfer_model_runtime STATIC
+  models/qwen3_5/frontend/frontend.cpp
+  models/qwen3_5/frontend/output_session.cpp
+  models/qwen3_5/frontend/chat_template.cpp
+  models/qwen3_5/frontend/prompt_layout.cpp
+  models/qwen3_5/frontend/digest.cpp
+  models/qwen3_5/frontend/processor.cpp
+  models/qwen3_5/frontend/media_cache.cpp
+  models/qwen3_5/frontend/tool_call_parser.cpp
+  models/qwen3_5/measurement.cpp
+  models/qwen3_5/execution/parameters.cpp
+  models/qwen3_5/execution/attention.cpp
+  models/qwen3_5/execution/ffn.cpp
+  models/qwen3_5/execution/gdn.cpp
+  models/qwen3_5/execution/mtp.cpp
+  models/qwen3_5/execution/text.cpp
+  models/qwen3_5/execution/vision.cpp
+  models/qwen3_5/execution/draft.cpp
+  models/qwen3_5/program/storage/draft_context.cpp
+  models/qwen3_5/state/decoder_state.cpp
+  models/qwen3_5/state/state_image.cpp
+  models/qwen3_5/program/planning/pressure_planner.cpp
+  models/qwen3_5/program/planning/startup.cpp
+  models/qwen3_5/program/planning/graph_profiles.cpp
+  models/qwen3_5/program/program.cpp
+  models/qwen3_5/program/program_impl.cpp
+  models/qwen3_5/program/session_export.cpp
+  models/qwen3_5/program/context_work.cpp
+  models/qwen3_5/program/planning/pressure.cpp
+  models/qwen3_5/program/planning/checkpoint_recovery.cpp
+  models/qwen3_5/program/transactions/materialization.cpp
+  models/qwen3_5/program/storage/context.cpp
+  models/qwen3_5/program/transactions/commit.cpp
+  models/qwen3_5/program/transactions/capture.cpp
+  models/qwen3_5/program/graphs.cpp
+  models/qwen3_5/program/decode.cpp
+  models/qwen3_5/program/prefill.cpp
+  models/qwen3_5/program/planning/request_plan.cpp
+  models/qwen3_5/program/speculative/mtp.cpp
+  models/qwen3_5/program/speculative/target_verification.cpp
+  models/qwen3_5/program/round_buffers.cpp
+  models/qwen3_5/program/vision_control.cpp
+  models/qwen3_5/execution/visual_scatter.cpp)
+ninfer_internal_includes(ninfer_model_runtime)
+target_link_libraries(ninfer_model_runtime
+  PUBLIC ninfer_model_loading ninfer_ops ninfer_runtime_support
+  PRIVATE ninfer_media_decode ninfer_jinja ninfer_qwen3_5_session_image)
 
 if(NINFER_BUILD_MEDIA_ACQUIRE)
   # Product-only path/data/HTTP acquisition. No target package links this library.
@@ -372,20 +463,19 @@ endif()
 # One cold closed registry plus the opaque public product Engine. Family and exact-target
 # directories contribute their sources directly to this single compile owner below.
 add_library(ninfer_engine STATIC
-  targets/registry.cpp
+  runtime/engine/model_instance.cpp
   runtime/contract/sampling.cpp
   runtime/engine/engine.cpp)
 ninfer_internal_includes(ninfer_engine)
 target_include_directories(ninfer_engine PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-add_subdirectory(targets/qwen3_6)
-add_subdirectory(targets/qwen3_6_27b)
-add_subdirectory(targets/qwen3_6_35b_a3b)
 
 target_link_libraries(ninfer_engine
   PRIVATE
+    ninfer_model_runtime
     ninfer_artifact
     ninfer_core
+    ninfer_runtime_support
     ninfer_ops
     ninfer_text
     ninfer_media_decode)
@@ -413,6 +503,7 @@ if(NINFER_BUILD_SERVE)
     serve/operational_log.cpp
     serve/request_log.cpp
     serve/http_server.cpp
+    serve/slot_api.cpp
     serve/openai_responses_http.cpp
     serve/serve_metrics.cpp
     serve/serve_options.cpp)

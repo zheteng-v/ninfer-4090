@@ -47,6 +47,12 @@ public:
     void request_failure(const RequestLogContext& context, const RequestFailure& failure) const;
     void response_failure(std::uint64_t request_id, const RequestFailure& failure) const;
     void throughput(const ThroughputReport& report) const;
+    void slot_saved(std::uint32_t slot, std::string_view filename,
+                    const ninfer::SlotSaveResult& result) const;
+    void slot_restored(std::uint32_t slot, std::string_view filename,
+                       const ninfer::SlotRestoreResult& result) const;
+    void slot_erased(std::uint32_t slot, std::uint32_t tokens) const;
+    void slot_auto_save(const ninfer::SlotAutoSaveEvent& event) const;
     void http_failure(std::string_view endpoint, const RequestFailure& failure,
                       std::string_view request_id = {}) const;
     void engine_capacity(const GenerationService& service) const;

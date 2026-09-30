@@ -1,3 +1,4 @@
+#include "core/weight.h"
 #include "ops/attn_input_proj/fp8/fp8_attn_input_plan.h"
 
 #include "ops/linear/fp8/fp8_config.h"
@@ -17,7 +18,7 @@ enum class Fp8AttnInputRoute : std::uint8_t {
 Fp8AttnInputRoute resolve_route(LinearPolicy policy, std::int32_t tokens) {
     if (tokens <= 0) { throw std::invalid_argument("fp8 attn_input_proj: T must be positive"); }
     if (policy == LinearPolicy::A16Only) { return Fp8AttnInputRoute::A16; }
-    if (policy != LinearPolicy::AllowA8) {
+    if (!allows_a8(policy)) {
         throw std::invalid_argument("fp8 attn_input_proj: unsupported policy");
     }
     return tokens >= 5 ? Fp8AttnInputRoute::A8 : Fp8AttnInputRoute::A16;

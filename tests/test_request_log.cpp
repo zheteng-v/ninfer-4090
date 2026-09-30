@@ -49,6 +49,8 @@ int main() {
     options.api_key                        = "must-not-appear";
     options.model_id_override              = "deployment-alias";
     options.request_log_jsonl              = "requests.jsonl";
+    options.slot_save_path                 = "/sessions";
+    options.auto_save_evicted              = true;
     options.max_context                    = 262144;
     options.kv_capacity                    = ninfer::KvCapacityPolicy::explicit_capacity(524288);
     options.prefill_chunk                  = 1024;
@@ -72,6 +74,7 @@ int main() {
     engine_options.max_pending_requests                            = options.max_pending_requests;
     engine_options.pending_timeout_ms                              = options.pending_timeout_ms;
     engine_options.prefill_chunk                                   = options.prefill_chunk;
+    engine_options.auto_save_evicted                               = options.auto_save_evicted;
     engine_options.kv_cache                                        = options.kv_cache;
     engine_options.speculative                                     = options.speculative;
     engine_options.enable_vision                                   = options.enable_vision;
@@ -89,23 +92,22 @@ int main() {
     };
 
     ninfer::LoadSummary load;
-    load.target               = "qwen3_6_27b";
-    load.model_id             = "qwen3.6-27b";
-    load.weights_id           = "groupwise-int";
+    load.architecture         = "Qwen3_5ForCausalLM";
+    load.model_name           = "qwen3.6-27b";
+    load.weight_formats       = {"q4_g64_fp16", "q8_g32_fp16"};
     load.load_seconds         = 1.234567890123;
     load.upload_seconds       = 0.345678901234;
     load.artifact_bytes_read  = 1000;
     load.host_to_device_bytes = 900;
     load.peak_staging_bytes   = 128;
-    load.tensor_count         = 42;
-    load.resource_count       = 6;
+    load.device_object_count  = 42;
+    load.host_object_count    = 6;
     load.context_cost         = {
-                .transfer_source = ninfer::ContextCostPresetSource::External,
-                .prefill_source  = ninfer::ContextCostPresetSource::CompiledDefault,
-                .hardware_class  = "nvidia-geforce-rtx-5090-sm120",
-                .model_id        = "qwen3.6-27b",
-                .weights_id      = "groupwise-int",
-                .preset_path     = "local-costs.json",
+                .transfer_source   = ninfer::ContextCostPresetSource::External,
+                .prefill_source    = ninfer::ContextCostPresetSource::CompiledDefault,
+                .hardware_class    = "nvidia-geforce-rtx-5090-sm120",
+                .prefill_signature = "example-prefill-signature",
+                .preset_path       = "local-costs.json",
     };
 
     ninfer::MemorySummary memory;
@@ -162,9 +164,11 @@ int main() {
     failures += check(server.at("event") == "server_start", "server event mismatch");
     failures += check(server.at("server").at("public_model_id") == "deployment-alias",
                       "resolved public model id missing");
-    failures += check(server.at("artifact").at("target") == "qwen3_6_27b", "server target missing");
-    failures += check(server.at("artifact").at("weights_id") == "groupwise-int",
-                      "server weights id missing");
+    failures += check(server.at("artifact").at("architecture") == "Qwen3_5ForCausalLM",
+                      "server target missing");
+    failures +=
+        check(server.at("artifact").at("formats") == Json::array({"q4_g64_fp16", "q8_g32_fp16"}),
+              "server weights id missing");
     failures += check(server.at("artifact").at("size_bytes") == 123456, "artifact size missing");
     failures += check(server.at("engine").at("max_context") == 262144, "max context missing");
     failures += check(server.at("engine").at("kv_capacity") == 524288, "KV capacity missing");
@@ -176,6 +180,9 @@ int main() {
         check(server.at("engine").at("log_stats_interval_ms") == 2500, "stats interval missing");
     failures += check(server.at("server").at("request_log_jsonl") == "requests.jsonl",
                       "request log path missing");
+    failures += check(server.at("server").at("slot_save_path") == "/sessions" &&
+                          server.at("engine").at("auto_save_evicted") == true,
+                      "slot persistence startup state missing");
     failures += check(server.at("server").at("default_thinking_budget") == 512,
                       "server thinking budget missing");
     failures += check(server.at("engine").at("kv_cache") == "fp8-e4m3-row256", "KV type missing");
@@ -261,7 +268,7 @@ int main() {
     PreparedRequest prepared;
     prepared.enable_thinking                           = true;
     prepared.thinking_budget                           = 256;
-    prepared.effective_reasoning_effort                = ninfer::ReasoningEffort::XHigh;
+    prepared.reasoning_effort                          = ninfer::ReasoningEffort::XHigh;
     prepared.preserve_thinking                         = true;
     prepared.sampling.temperature                      = 0.6F;
     prepared.sampling.top_p                            = 0.95F;
@@ -294,12 +301,13 @@ int main() {
             "xhigh, budget 256 | media 1, prepared 120 ms | preserve thinking",
         "pretty request-start record mismatch");
     RequestLogContext default_thinking = context;
-    default_thinking.resolved_reasoning_effort.reset();
+    default_thinking.requested_reasoning_effort.reset();
     default_thinking.thinking_budget.reset();
     const std::string default_thinking_start = render_request_start(default_thinking).message;
-    failures += check(default_thinking_start.find("thinking on") != std::string::npos &&
-                          default_thinking_start.find("unresolved") == std::string::npos,
-                      "default thinking state leaks an internal resolution detail");
+    failures +=
+        check(default_thinking_start.find("thinking template default") != std::string::npos &&
+                  default_thinking_start.find("unresolved") == std::string::npos,
+              "default thinking state leaks an internal resolution detail");
     const Json started = Json::parse(format_request_start_json("serve-test", 2000, context));
     failures +=
         check(started.at("request").at("request_id") == 7, "request id missing from start record");
@@ -309,8 +317,8 @@ int main() {
                       "resolved thinking mode missing");
     failures += check(started.at("request").at("thinking_budget") == 256,
                       "resolved thinking budget missing");
-    failures += check(started.at("request").at("requested_reasoning_effort").is_null() &&
-                          started.at("request").at("resolved_reasoning_effort") == "xhigh",
+    failures += check(started.at("request").at("requested_reasoning_effort") == "xhigh" &&
+                          !started.at("request").contains("resolved_reasoning_effort"),
                       "requested and resolved reasoning effort are not distinguished");
     failures += check(started.at("request").at("preserve_thinking") == true &&
                           started.at("request").at("preserve_thinking_semantic_change") == true,
@@ -344,7 +352,7 @@ int main() {
                           rejected.at("request").at("message_count") == 2,
                       "preparation rejection request shape missing");
     failures += check(rejected.at("request").at("requested_reasoning_effort") == "high" &&
-                          rejected.at("request").at("resolved_reasoning_effort").is_null(),
+                          !rejected.at("request").contains("resolved_reasoning_effort"),
                       "rejection log fabricated a resolved reasoning effort");
     failures += check(rejected.at("error").at("status") == 400 &&
                           rejected.at("error").at("code") == "context_length_exceeded" &&

@@ -23,32 +23,49 @@ void append_counter(std::string& out, const char* name, double value) {
 } // namespace
 
 void ServeMetrics::record(const GenerationOutcome& outcome) {
-    const GenerationMetrics& m = outcome.metrics;
-    const std::uint64_t cached = m.prefix_cache_hit_tokens;
-    const std::uint64_t prompt = outcome.prompt_tokens > 0
-                                     ? static_cast<std::uint64_t>(outcome.prompt_tokens)
-                                     : 0;
+    const GenerationMetrics& metrics = outcome.metrics;
+    const std::uint64_t cached        = metrics.prefix_cache_hit_tokens;
+    const std::uint64_t prompt =
+        outcome.prompt_tokens > 0 ? static_cast<std::uint64_t>(outcome.prompt_tokens) : 0;
 
-    const std::lock_guard<std::mutex> lock(mutex_);
-    requests_total_ += 1;
+    const std::lock_guard lock(mutex_);
+    ++requests_total_;
     prefix_cache_hit_tokens_total_ += cached;
-    speculative_draft_tokens_total_ += m.speculative_draft_tokens;
-    speculative_accepted_tokens_total_ += m.speculative_accepted_tokens;
+    speculative_draft_tokens_total_ += metrics.speculative_draft_tokens;
+    speculative_accepted_tokens_total_ += metrics.speculative_accepted_tokens;
     last_completed_.prompt_tokens = static_cast<int>(prompt);
-    // Clamped like computed_prefill above: a cache figure reported larger
-    // than the prompt must not advertise more resident tokens than exist.
     last_completed_.cached_tokens = static_cast<int>(std::min(cached, prompt));
 }
 
+void ServeMetrics::record_slot_action(SlotMetricAction action, bool success) {
+    const std::lock_guard lock(mutex_);
+    if (!success) {
+        ++slot_operation_failures_total_;
+        return;
+    }
+    switch (action) {
+    case SlotMetricAction::Save:
+        ++slot_save_total_;
+        break;
+    case SlotMetricAction::Restore:
+        ++slot_restore_total_;
+        break;
+    case SlotMetricAction::Erase:
+        ++slot_erase_total_;
+        break;
+    }
+}
+
 ServeMetrics::LastCompleted ServeMetrics::last_completed() const {
-    const std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard lock(mutex_);
     return last_completed_;
 }
 
 std::string ServeMetrics::render(std::uint32_t max_concurrency,
                                  const ninfer::RuntimeStats& live,
-                                 std::size_t active_requests) const {
-    const std::lock_guard<std::mutex> lock(mutex_);
+                                 std::size_t active_requests,
+                                 const std::vector<ninfer::SlotState>& slots) const {
+    const std::lock_guard lock(mutex_);
     const std::uint64_t in_flight  = active_requests;
     const std::uint64_t processing = std::min<std::uint64_t>(in_flight, max_concurrency);
     std::string out;
@@ -63,6 +80,22 @@ std::string ServeMetrics::render(std::uint32_t max_concurrency,
     append_counter(out, "ninfer:prefix_cache_hit_tokens_total", prefix_cache_hit_tokens_total_);
     append_counter(out, "ninfer:draft_tokens_total", speculative_draft_tokens_total_);
     append_counter(out, "ninfer:draft_accepted_tokens_total", speculative_accepted_tokens_total_);
+    append_counter(out, "ninfer:slots_total", slots.size());
+    append_counter(out, "ninfer:slots_processing",
+                   static_cast<std::uint64_t>(std::count_if(
+                       slots.begin(), slots.end(), [](const ninfer::SlotState& slot) {
+                           return slot.processing;
+                       })));
+    append_counter(out, "ninfer:slots_retained",
+                   static_cast<std::uint64_t>(std::count_if(
+                       slots.begin(), slots.end(), [](const ninfer::SlotState& slot) {
+                           return slot.retained;
+                       })));
+    append_counter(out, "ninfer:slot_save_total", slot_save_total_);
+    append_counter(out, "ninfer:slot_restore_total", slot_restore_total_);
+    append_counter(out, "ninfer:slot_erase_total", slot_erase_total_);
+    append_counter(out, "ninfer:slot_operation_failures_total",
+                   slot_operation_failures_total_);
     return out;
 }
 

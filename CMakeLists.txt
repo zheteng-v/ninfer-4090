@@ -92,6 +92,13 @@ else()
 endif()
 find_package(Threads REQUIRED)
 
+# Repository-pinned nlohmann/json headers shared by the engine and template evaluator.
+add_library(ninfer::json INTERFACE IMPORTED GLOBAL)
+target_include_directories(ninfer::json INTERFACE ${PROJECT_SOURCE_DIR}/third_party)
+
+# Source base for the custom-template frontend; consumers link it explicitly.
+add_subdirectory(third_party/llama-jinja EXCLUDE_FROM_ALL)
+
 if(NINFER_BUILD_APPS OR BUILD_TESTING)
   # Product operational logging is an offline, repository-pinned dependency. Core-only builds do
   # not configure or link it.
