@@ -240,9 +240,8 @@ See [the v3 serving fast-gate report](2026-09-30-v3-serving-fast-gate.md). The f
 session-slot increment is now complete: a deterministic, bounded, model-bound v3 snapshot container
 has its own magic, explicit little-endian layout, whole-image and per-section CRC64, and focused
 round-trip/corruption tests. Old `NINFSES1` images are deliberately rejected. Engine/Program state
-export/import, atomic file publication, Serve routes, and restart/eviction tests remain open; the
-presence of legacy public method declarations must not be reported as working persistence. The
-second increment defines the complete Qwen3.5 staging image, preserves checkpoint StateImage
+export/import, atomic file publication, Serve routes, and restart/eviction tests were still open at
+that stage. The second increment defines the complete Qwen3.5 staging image, preserves checkpoint StateImage
 aliases, binds physical State/KV layouts, recomputes prefix digests, and validates all data before
 live Program mutation. See [the container report](2026-09-30-v3-snapshot-format.md) and
 [the Program staging-image report](2026-09-30-v3-program-staging-image.md). The third increment
@@ -250,10 +249,14 @@ adds stable-boundary physical export from a catalogued continuation without allo
 changing Program state. It preserves StateImage aliases and canonicalizes mixed Host/Device KV in
 logical order. The fourth increment adds transactional physical import: it validates before
 mutation, reserves every State/KV destination before transfer, publishes through a non-throwing
-tail, and rolls failed imports back without changing the catalog or resource revision. Atomic disk
-publication and the Engine slot API remain open. See
+tail, and rolls failed imports back without changing the catalog or resource revision. The fifth
+increment adds bounded crash-durable file publication and restores Engine save/restore/erase/list
+plus eviction auto-save. Replacement failures roll the resident continuation back, and a real v3
+artifact passed save/delete/restore, corruption, eviction, and fresh-Engine restore gates. Serve
+routes and their protocol/schema tests remain open. See
 [the Program physical-export report](2026-09-30-v3-program-physical-export.md) and
-[the Program physical-import report](2026-09-30-v3-program-physical-import.md).
+[the Program physical-import report](2026-09-30-v3-program-physical-import.md), then
+[the durable Engine-slot report](2026-09-30-v3-durable-session-slots.md).
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -323,3 +326,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3 Qwen3.5 Program staging image | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined alias-aware State/KV/identity/checkpoint sections and a fully owned pre-publication validation gate; host-only round-trip and negative tests pass, including DFlash2 without paged Backend KV; physical Program store capture/publish remains open |
 | 2026-09-30 | v3 Qwen3.5 Program physical export | `d44ab584` (`dev` `75a89050`) | `aeeba414` | exported catalogued continuations at a stable Program boundary, preserving State aliases and logical KV order across mixed Host/Device placement without residency mutation; PR #335 classified watch/benchmark-first; physical import and publication remain open |
 | 2026-09-30 | v3 Qwen3.5 Program physical import | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored validated continuations through fully reserved State/KV destinations and a non-throwing publication tail; focused H2D round-trip and rollback gates pass; PR #335 remains watch/benchmark-first; durable files and Engine methods remain open |
+| 2026-09-30 | v3 durable Engine session slots | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored crash-durable save/restore/erase/list and guarded eviction auto-save; host contracts and one real-artifact fresh-Engine round-trip pass; Serve routes remain open |
