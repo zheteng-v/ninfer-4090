@@ -104,6 +104,12 @@ save. Sessions never saved or restored have no binding and are not spilled; an e
 `erase` is a deletion request and never auto-saves. The console reports each spill as
 `slot auto-saved | file ... | ... tokens`.
 
+Restore also remains bounded when the private catalog is full but its free physical checkpoint
+capacity is Host-resident: Engine retires the shallowest other idle catalog entry, applies the same
+auto-save contract when that entry has a file binding, and retries the import. Active entries are
+never selected. A restore over an occupied target similarly auto-saves the displaced target after
+the replacement commits; a failed import rolls that target back instead.
+
 `GET /metrics` includes live `ninfer:slots_total`, `ninfer:slots_processing`, and
 `ninfer:slots_retained` gauges, plus cumulative successful `ninfer:slot_save_total`,
 `ninfer:slot_restore_total`, `ninfer:slot_erase_total`, and
