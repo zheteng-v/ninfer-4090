@@ -7,7 +7,7 @@ The engine loads the official groupwise `.ninfer` artifact, serves OpenAI- and
 Anthropic-compatible APIs, and supports paged KV, compatible-prefix reuse, CUDA Graphs, MTP
 speculative decoding, reasoning-effort control, and ReplaySSM state transactions.
 
-This repository is the maintained `zhetengv-gif/ninfer-4090` downstream. The validated production
+This repository is the maintained `zheteng-v/ninfer-4090` downstream. The validated production
 line stays on `main`; upstream-v3 work is integrated on dedicated sync branches before it can
 replace that line. Every iteration starts with an audit of both
 [Neroued/ninfer](https://github.com/Neroued/ninfer) and

@@ -1,7 +1,7 @@
 # RTX 4090 downstream maintenance contract
 
 This document is the single authority for maintaining
-[`zhetengv-gif/ninfer-4090`](https://github.com/zhetengv-gif/ninfer-4090). It records repository
+[`zheteng-v/ninfer-4090`](https://github.com/zheteng-v/ninfer-4090). It records repository
 ownership, upstream review, integration policy, validation gates, releases, and the development
 roadmap. Architecture and Op details remain owned by their existing maintainer references.
 
@@ -27,7 +27,7 @@ quality gates on both candidates. Regressions and losing cohorts remain in the r
 
 | Remote | Fetch source | Role |
 |---|---|---|
-| `origin` | `zhetengv-gif/ninfer-4090` | maintained downstream; the only push destination |
+| `origin` | `zheteng-v/ninfer-4090` | maintained downstream; the only push destination |
 | `upstream` | `Neroued/ninfer` | authoritative architecture, model, artifact, runtime, and generic optimization source |
 | `sergiuszm` | `sergiuszm/ninfer-4090` | validated Ada port and second source of `sm_89` fixes |
 
