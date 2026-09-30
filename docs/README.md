@@ -39,6 +39,10 @@ The active references under [`maintainer/`](maintainer/) record current architec
 artifact, and maintenance contracts. These files are not additional user workflows or installed
 API documentation.
 
+The [RTX 4090 downstream maintenance contract](maintainer/downstream-maintenance.md) is the single
+authority for remote ownership, upstream review, branch policy, validation gates, releases, the v3
+migration roadmap, and the append-only downstream sync record.
+
 The agreed [model configuration, weight binding, and execution target architecture](maintainer/model-weight-execution.md)
 defines the intended model/artifact/Op boundaries, converter responsibilities, runtime support
 checks, and end-to-end design examples. It is a design contract, not a claim of implemented
