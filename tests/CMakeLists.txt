@@ -100,6 +100,8 @@ ninfer_add_test(ninfer_resource_manager_test SOURCES test_resource_manager.cpp
 ninfer_add_test(ninfer_materialization_budget_test SOURCES test_materialization_budget.cpp)
 ninfer_add_test(ninfer_kv_capacity_test SOURCES test_kv_capacity.cpp
   LIBRARIES ninfer_runtime_support)
+ninfer_add_test(ninfer_session_snapshot_test SOURCES test_session_snapshot.cpp
+  LIBRARIES ninfer_runtime_support)
 ninfer_add_test(ninfer_sampling_defaults_test
   SOURCES test_sampling_defaults.cpp
   LIBRARIES ninfer_engine ninfer_core)

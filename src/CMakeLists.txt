@@ -36,6 +36,7 @@ ninfer_cuda_archive(ninfer_core)
 target_link_libraries(ninfer_core PUBLIC CUDA::cudart CUDA::nvtx3 Threads::Threads)
 
 add_library(ninfer_runtime_support STATIC
+  runtime/session_snapshot.cpp
   runtime/engine/admission_policy.cpp
   runtime/engine/context_cache/context_cost.cpp
   runtime/engine/context_cache/context_cost_defaults.cpp
