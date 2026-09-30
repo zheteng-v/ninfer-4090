@@ -327,26 +327,43 @@ public:
             rollback->tokens = instance_.program->continuation_depth(*existing.handle);
             rollback->session_digest = instance_.program->continuation_digest(*existing.handle);
             rollback_path = slot_session_paths_[slot];
+            const auto rollback_summary =
+                instance_.program->continuation_summary(*existing.handle);
             auto displaced = resources_.take_catalogued(slot);
-            (void)instance_.program->release_continuation(std::move(displaced));
+            const auto released = instance_.program->release_continuation(std::move(displaced));
+            if (released.status != ConsumeStatus::Consumed) {
+                resources_.adopt_restored(slot, std::move(displaced), rollback_summary);
+                bind_slot_session(slot, rollback_path);
+                throw std::logic_error("resident session could not be released for restore");
+            }
         }
         clear_slot_session(slot);
 
         try {
-            auto restored = instance_.program->import_continuation(
-                snapshot, model_binding, kDefaultSessionSnapshotLimit);
-            const std::uint32_t tokens = instance_.program->continuation_depth(restored);
-            std::string digest         = instance_.program->continuation_digest(restored);
-            const auto summary         = instance_.program->continuation_summary(restored);
-            try {
-                resources_.adopt_restored(slot, std::move(restored), summary);
-            } catch (...) {
-                (void)instance_.program->release_continuation(std::move(restored));
-                throw;
+            for (;;) {
+                try {
+                    auto restored = instance_.program->import_continuation(
+                        snapshot, model_binding, kDefaultSessionSnapshotLimit);
+                    const std::uint32_t tokens =
+                        instance_.program->continuation_depth(restored);
+                    std::string digest = instance_.program->continuation_digest(restored);
+                    const auto summary = instance_.program->continuation_summary(restored);
+                    try {
+                        resources_.adopt_restored(slot, std::move(restored), summary);
+                    } catch (...) {
+                        (void)instance_.program->release_continuation(std::move(restored));
+                        throw;
+                    }
+                    bind_slot_session(slot, session_path);
+                    if (rollback && !rollback_path.empty()) {
+                        enqueue_eviction_snapshot(rollback_path, std::move(*rollback));
+                    }
+                    publish_runtime_stats();
+                    return {tokens, std::move(digest)};
+                } catch (const std::bad_alloc&) {
+                    if (!evict_restore_pressure_victim(slot)) { throw; }
+                }
             }
-            bind_slot_session(slot, session_path);
-            publish_runtime_stats();
-            return {tokens, std::move(digest)};
         } catch (...) {
             const std::exception_ptr failure = std::current_exception();
             if (rollback) {
@@ -366,6 +383,8 @@ public:
                     throw std::logic_error(
                         "session restore failed and the resident session could not be rolled back");
                 }
+            } else {
+                publish_runtime_stats();
             }
             std::rethrow_exception(failure);
         }
@@ -446,9 +465,56 @@ private:
                 handle, eviction_model_binding_, kDefaultSessionSnapshotLimit);
             snapshot.tokens         = instance_.program->continuation_depth(handle);
             snapshot.session_digest = instance_.program->continuation_digest(handle);
-            eviction_sink_(slot_session_paths_[slot], std::move(snapshot));
+            enqueue_eviction_snapshot(slot_session_paths_[slot], std::move(snapshot));
         } catch (...) {}
         clear_slot_session(slot);
+    }
+
+    void enqueue_eviction_snapshot(std::string_view path,
+                                   RetainedSessionSnapshot&& snapshot) noexcept {
+        if (!eviction_sink_ || path.empty()) { return; }
+        try {
+            eviction_sink_(std::string(path), std::move(snapshot));
+        } catch (...) {}
+    }
+
+    // Import needs Device-resident StateImage destinations. At a full catalog the target can be
+    // Host-resident while another idle continuation occupies every Device state slot, so releasing
+    // only the target does not guarantee progress. Retire the shallowest other idle continuation
+    // through the normal eviction contract and let the bounded caller retry.
+    [[nodiscard]] bool evict_restore_pressure_victim(std::uint32_t protected_slot) {
+        std::optional<std::uint32_t> victim;
+        std::uint32_t victim_depth = std::numeric_limits<std::uint32_t>::max();
+        for (std::uint32_t candidate = 0; candidate < resources_.catalog_capacity(); ++candidate) {
+            if (candidate == protected_slot) { continue; }
+            const typename ResourceManagement::CatalogSlotView view =
+                resources_.catalog_slot(candidate);
+            if (view.state != ResourceManagement::CatalogState::Catalogued ||
+                view.handle == nullptr || view.active_references != 0) {
+                continue;
+            }
+            const std::uint32_t depth = instance_.program->continuation_depth(*view.handle);
+            if (!victim || depth < victim_depth) {
+                victim       = candidate;
+                victim_depth = depth;
+            }
+        }
+        if (!victim) { return false; }
+
+        const typename ResourceManagement::CatalogSlotView view =
+            resources_.catalog_slot(*victim);
+        const auto summary = instance_.program->continuation_summary(*view.handle);
+        const std::string path = slot_session_paths_[*victim];
+        spill_catalog_slot(*victim, *view.handle);
+        auto displaced = resources_.take_catalogued(*victim);
+        const auto released = instance_.program->release_continuation(std::move(displaced));
+        if (released.status != ConsumeStatus::Consumed) {
+            resources_.adopt_restored(*victim, std::move(displaced), summary);
+            bind_slot_session(*victim, path);
+            return false;
+        }
+        publish_runtime_stats();
+        return true;
     }
 
     void clear_slot_session(std::uint32_t slot) noexcept {

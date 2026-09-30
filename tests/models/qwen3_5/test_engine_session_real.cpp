@@ -71,6 +71,7 @@ int main() {
     if (directory == nullptr) { throw std::runtime_error("mkdtemp failed"); }
     const std::filesystem::path root(directory);
     const std::filesystem::path path = root / "slot.nsession";
+    const std::filesystem::path replacement_path = root / "replacement.nsession";
     try {
         std::mutex event_mutex;
         std::condition_variable event_cv;
@@ -155,11 +156,77 @@ int main() {
                 "eviction auto-save did not publish a readable file");
         }
 
-        ninfer::Engine restarted(engine_options(artifact));
-        const auto restarted_restore = restarted.restore_slot(slot, path.string());
-        require(restarted_restore.tokens == saved.tokens &&
-                    restarted_restore.session_digest == digest,
-                "a fresh Engine did not restore the durable session");
+        {
+            ninfer::Engine restarted(engine_options(artifact));
+            const auto restarted_restore = restarted.restore_slot(slot, path.string());
+            require(restarted_restore.tokens == saved.tokens &&
+                        restarted_restore.session_digest == digest,
+                    "a fresh Engine did not restore the durable session");
+        }
+
+        // A full two-entry catalog can leave the replacement target Host-resident while the other
+        // continuation occupies every Device StateImage slot. Restore must retire that other idle
+        // entry through the normal pressure/auto-save path and retry instead of leaking bad_alloc.
+        std::mutex pressure_event_mutex;
+        std::condition_variable pressure_event_cv;
+        std::vector<ninfer::SlotAutoSaveEvent> pressure_events;
+        ninfer::EngineOptions pressure_options = engine_options(artifact);
+        pressure_options.context_cache.max_private_continuations = 2;
+        pressure_options.auto_save_evicted = true;
+        pressure_options.auto_save_listener = [&](const ninfer::SlotAutoSaveEvent& event) {
+            {
+                std::scoped_lock lock(pressure_event_mutex);
+                pressure_events.push_back(event);
+            }
+            pressure_event_cv.notify_one();
+        };
+        std::uint32_t first_slot = 0;
+        std::string first_digest;
+        {
+            ninfer::Engine pressure(std::move(pressure_options));
+            const auto first_prompt = pressure.tokenize_text("First retained replacement session.");
+            (void)pressure.generate(pressure.prepare_tokens(first_prompt), request(8));
+            first_slot = retained_slot(pressure.slot_states());
+            first_digest = pressure.slot_states()[first_slot].session_digest;
+            (void)pressure.save_slot(first_slot, path.string(), first_digest);
+
+            const auto second_prompt =
+                pressure.tokenize_text("Second retained replacement session with distinct tokens.");
+            (void)pressure.generate(pressure.prepare_tokens(second_prompt), request(8));
+            const auto before_replace = pressure.slot_states();
+            const auto second = std::find_if(
+                before_replace.begin(), before_replace.end(), [&](const ninfer::SlotState& state) {
+                    return state.retained && state.session_digest != first_digest;
+                });
+            require(second != before_replace.end(), "second catalog session was not retained");
+            const std::uint32_t second_slot =
+                static_cast<std::uint32_t>(std::distance(before_replace.begin(), second));
+            const auto second_saved =
+                pressure.save_slot(second_slot, replacement_path.string(), second->session_digest);
+
+            const auto replaced = pressure.restore_slot(first_slot, replacement_path.string());
+            require(replaced.tokens == second_saved.tokens &&
+                        replaced.session_digest == second_saved.session_digest,
+                    "full-catalog restore did not install the replacement session");
+            const auto after_replace = pressure.slot_states();
+            require(after_replace[first_slot].retained &&
+                        after_replace[first_slot].session_digest == second_saved.session_digest,
+                    "full-catalog restore published the wrong target slot");
+
+            std::unique_lock lock(pressure_event_mutex);
+            require(pressure_event_cv.wait_for(lock, std::chrono::seconds(30), [&] {
+                        return std::any_of(
+                            pressure_events.begin(), pressure_events.end(), [&](const auto& event) {
+                                return event.path == path.string() && event.error.empty();
+                            });
+                    }),
+                    "replacement did not auto-save the displaced bound session");
+        }
+
+        ninfer::Engine displaced_restore(engine_options(artifact));
+        const auto displaced = displaced_restore.restore_slot(first_slot, path.string());
+        require(displaced.session_digest == first_digest,
+                "replacement auto-save did not preserve the displaced session");
 
         std::error_code cleanup_error;
         std::filesystem::remove_all(root, cleanup_error);
