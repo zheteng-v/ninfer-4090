@@ -26,17 +26,18 @@ This fork targets `sm_89` and Linux. Blackwell-only NVFP4/W4A4 execution is unav
 engine uses the same groupwise-int path as the 3090 base. The Windows path and the
 Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.
 
-The `sync/2026-09-30-v3-sm89` integration line uses NInfer artifact v3 and the bound-instance Qwen3.5
-runtime architecture from upstream. It has been compiled end to end for `sm_89`, and the official
+The production `main` line uses NInfer artifact v3 and the bound-instance Qwen3.5 runtime
+architecture from upstream. It has been compiled end to end for `sm_89`, and the official
 `qwen3_8_27b_v3.ninfer` artifact has passed host binding for Text, MTP, DFlash2, and Vision.
 It also completes real 262K INT8 device startup and text inference with both no speculation and
 MTP3. Upstream's generic Jinja executor is integrated and has passed reference-template, OpenAI
-tool-call, Vision, and dual-lane 200K probes on the real model. The production v2 line remains the
-default until the remaining release gates finish. The v3 line also restores live Prometheus
+tool-call, Vision, and dual-lane 200K probes on the real model. The v3 line also restores live Prometheus
 `/metrics` and passes focused OpenAI/Anthropic streaming, cancellation, queue-timeout, and
-two-lane-isolation gates.
+two-lane-isolation gates. The complete release evidence is in the
+[v3/sm89 release record](docs/maintainer/2026-10-01-v3-sm89-release.md); tagged v2 remains the
+rollback line.
 
-## Measured results on the RTX 4090
+## Retained v2 performance baseline on the RTX 4090
 
 Conditions: single request, greedy decoding, CUDA Graphs on, INT8 KV, `--prefill-chunk 1024`,
 official 16.96 GiB Qwen3.8-27B artifact. The code-generation decode row and the prefill rows
