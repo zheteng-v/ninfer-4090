@@ -43,8 +43,9 @@ be committed.
 
 Branch roles:
 
-- `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. It currently preserves
-  the proven v2/sm89 line.
+- `main`: deployable, reviewed, and validated on the local 48 GiB RTX 4090. The tagged
+  `v2-sm89-production-2026-09-30` line remains the rollback source while the v3 release candidate
+  completes canary deployment.
 - `sync/YYYY-MM-DD-v3-sm89`: temporary integration branch based on the last validated Ada line,
   with the upstream v3 architecture replayed in its original commit order and conflicts reviewed.
 - `perf/<topic>`, `fix/<topic>`, `feat/<topic>`: one bounded decision per branch.
@@ -161,8 +162,8 @@ reports intended for the community.
 - [x] establish the downstream repository without discarding the original target-repository history;
 - [x] configure explicit `origin`, `upstream`, and `sergiuszm` roles;
 - [x] add the repeatable upstream/PR audit;
-- [ ] tag the last validated v2 production commit after a clean rebuild and smoke run;
-- [ ] export a scrubbed machine-readable baseline and exact benchmark commands.
+- [x] tag the last validated v2 production commit after a clean rebuild and smoke run;
+- [x] export a scrubbed machine-readable baseline and exact benchmark commands.
 
 ### P1 — boot a minimal v3/sm89 candidate
 
@@ -233,8 +234,8 @@ Serving-envelope status on 2026-09-30:
 - [x] a short second-lane request completes during a long first-lane decode;
 - [x] production-compatible `/metrics` is restored on v3 using live Engine prefill/decode totals
   and request-lifetime processing/deferred gauges;
-- [ ] streaming disconnect and cancellation still need a repeated mixed-protocol soak before a v3
-  release candidate can replace `main`.
+- [x] streaming disconnect and cancellation pass, followed by 20 consecutive mixed-protocol
+  contract cycles (160 requests) without an unexpected error or inconsistent result.
 
 See [the v3 serving fast-gate report](2026-09-30-v3-serving-fast-gate.md). The first disk
 session-slot increment is now complete: a deterministic, bounded, model-bound v3 snapshot container
@@ -253,10 +254,19 @@ tail, and rolls failed imports back without changing the catalog or resource rev
 increment adds bounded crash-durable file publication and restores Engine save/restore/erase/list
 plus eviction auto-save. Replacement failures roll the resident continuation back, and a real v3
 artifact passed save/delete/restore, corruption, eviction, and fresh-Engine restore gates. Serve
-routes and their protocol/schema tests remain open. See
+save/restore/erase/list routes, schema tests, restart restore, and full-catalog replacement pressure
+now pass. See
 [the Program physical-export report](2026-09-30-v3-program-physical-export.md) and
 [the Program physical-import report](2026-09-30-v3-program-physical-import.md), then
 [the durable Engine-slot report](2026-09-30-v3-durable-session-slots.md).
+
+The complete release-candidate evidence and exact commands are recorded in
+[the v3/sm89 release report](2026-10-01-v3-sm89-release.md), with a scrubbed machine-readable
+companion at [`docs/performance/data/v3-sm89-release-2026-10-01.json`](../performance/data/v3-sm89-release-2026-10-01.json).
+The main operational caveat is explicit: two long prompts fit in the dual 200K profile, but the
+current non-preemptive scheduler admits their long prefill phases serially. The production profile
+therefore uses a 600-second pending timeout; `max-concurrency=2` describes two resident lanes and
+decode isolation, not parallel long-prefill throughput.
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -327,3 +337,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3 Qwen3.5 Program physical export | `d44ab584` (`dev` `75a89050`) | `aeeba414` | exported catalogued continuations at a stable Program boundary, preserving State aliases and logical KV order across mixed Host/Device placement without residency mutation; PR #335 classified watch/benchmark-first; physical import and publication remain open |
 | 2026-09-30 | v3 Qwen3.5 Program physical import | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored validated continuations through fully reserved State/KV destinations and a non-throwing publication tail; focused H2D round-trip and rollback gates pass; PR #335 remains watch/benchmark-first; durable files and Engine methods remain open |
 | 2026-09-30 | v3 durable Engine session slots | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored crash-durable save/restore/erase/list and guarded eviction auto-save; host contracts and one real-artifact fresh-Engine round-trip pass; Serve routes remain open |
+| 2026-10-01 | v3/sm89 release candidate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | clean Release sm89 build; all 127 CTest entries pass or skip only unsupported/real-artifact fixtures; compatible real-artifact gates, 8K/64K/128K/256K exact NIAH, cancellation, durable slots, Vision and 20-cycle mixed protocol soak pass; v2 rollback tagged; long-prefill serialization and roughly 9.5-minute CUDA Graph startup retained as documented operational limits |

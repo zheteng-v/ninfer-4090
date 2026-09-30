@@ -1,0 +1,90 @@
+{
+  "schema": "ninfer_downstream_release_evidence_v1",
+  "date": "2026-10-01",
+  "hardware": {
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "compute_capability": "8.9",
+    "memory_mib": 49140,
+    "driver": "615.71.09",
+    "cuda": "13.1",
+    "compiler": "g++ 14.2.0"
+  },
+  "source": {
+    "candidate_before_report": "df3ccf3a4f7c5e92cf7bd164ba86f414f945c73c",
+    "v2_rollback": "60e061fee33386695bae86e16099096d807e6d55",
+    "v2_tag": "v2-sm89-production-2026-09-30",
+    "upstream_master": "d44ab58408aa389728cd8b1ee50179527e1f3e0d",
+    "upstream_dev": "75a890502e0c25ff8786e995b975642a6d6e39ff",
+    "sergiuszm_rtx4090_port": "aeeba414459d5d6989d57d8487c9d7a2f54bddd3"
+  },
+  "artifacts": {
+    "v3": {
+      "file": "models/qwen3_8_27b_v3.ninfer",
+      "sha256": "81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da"
+    },
+    "v2": {
+      "file": "models/qwen3_8_27b.ninfer",
+      "sha256": "0634abb07024221de141456cf04a42ab74b18bc38e1b781c6eb2e062a467eec3"
+    }
+  },
+  "gates": {
+    "clean_release_build_units": 520,
+    "ctest_entries": 127,
+    "ctest_failures": 0,
+    "expected_skips": 13,
+    "mixed_protocol_cycles": 20,
+    "mixed_protocol_requests": 160,
+    "unexpected_request_errors": 0,
+    "rollback_canary": "pass"
+  },
+  "single_lane": {
+    "max_context": 262144,
+    "kv_capacity": 262144,
+    "kv_dtype": "int8",
+    "speculation": "mtp",
+    "draft_tokens": 3,
+    "vision": true,
+    "cuda_graph_startup_seconds": 573.7,
+    "runtime_gib": 9.41
+  },
+  "niah": [
+    {"prompt_tokens": 7680, "exact": true, "prefill_tokens_per_second": 2155.28, "decode_tokens_per_second": 172.92, "mtp_accepted": 12, "mtp_drafted": 12},
+    {"prompt_tokens": 64512, "exact": true, "prefill_tokens_per_second": 1884.52, "decode_tokens_per_second": 149.44, "mtp_accepted": 12, "mtp_drafted": 12},
+    {"prompt_tokens": 130048, "exact": true, "prefill_tokens_per_second": 1599.75, "decode_tokens_per_second": 132.73, "mtp_accepted": 12, "mtp_drafted": 12},
+    {"prompt_tokens": 260096, "exact": true, "prefill_tokens_per_second": 1251.01, "decode_tokens_per_second": 109.96, "mtp_accepted": 12, "mtp_drafted": 12}
+  ],
+  "same_condition_ab": {
+    "profile": "262144 context and KV, one lane, INT8 KV, MTP3, Vision, greedy, thinking off, prefix reuse off",
+    "code_python": {
+      "v2_decode_tokens_per_second": 149.3568664540564,
+      "v3_decode_tokens_per_second": 135.37397443511608,
+      "v2_mtp": {"accepted": 359, "drafted": 456},
+      "v3_mtp": {"accepted": 363, "drafted": 444},
+      "quality": "both contained pyproject.toml, asyncio, JSONL, and pytest"
+    },
+    "niah_64k": {
+      "v2_exact": true,
+      "v3_exact": true,
+      "v2_prefill_tokens_per_second": 1884.6976877295876,
+      "v3_prefill_tokens_per_second": 1886.496401370455,
+      "v2_decode_tokens_per_second": 149.58754739763245,
+      "v3_decode_tokens_per_second": 134.31950377204006
+    }
+  },
+  "dual_lane": {
+    "max_context_per_lane": 204800,
+    "kv_capacity": 409600,
+    "max_concurrency": 2,
+    "runtime_gib": 14.6,
+    "pending_timeout_ms_production": 600000,
+    "long_prefill_admission": "serialized",
+    "near_200k_two_request_correctness": "both exact with extended pending timeout"
+  },
+  "commands": {
+    "configure": "cmake -S . -B build-native -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/bin/gcc-14 -DCMAKE_CXX_COMPILER=/usr/bin/g++-14 -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.1/bin/nvcc -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-14 -DCMAKE_CUDA_ARCHITECTURES=89 -DPython3_EXECUTABLE=/data/llm/sglang/venv/bin/python -DNINFER_BUILD_APPS=ON -DBUILD_TESTING=ON -DNINFER_BUILD_BENCHMARKS=OFF",
+    "build": "cmake --build build-native -j",
+    "test": "ctest --test-dir build-native --output-on-failure",
+    "single_serve_arguments": "--max-context 262144 --kv-capacity 262144 --max-concurrency 1 --kv-dtype int8 --spec mtp --draft-tokens 3 --vision --pending-timeout-ms 600000",
+    "dual_serve_arguments": "--max-context 204800 --kv-capacity 409600 --max-concurrency 2 --kv-dtype int8 --spec mtp --draft-tokens 3 --vision --pending-timeout-ms 600000"
+  }
+}
