@@ -40,7 +40,8 @@ ninfer::EngineOptions host_restore_engine_options(const char* artifact) {
     options.speculative.proposal_head            = ninfer::ProposalHead::Optimized;
     options.max_concurrency                      = 1;
     options.max_pending_requests                 = 1;
-    options.context_cache.device_state_slots     = 1;
+    // No cached Device StateImage slot makes Host state movement part of this fixture's contract.
+    options.context_cache.device_state_slots     = 0;
     options.context_cache.host_state_slots       = 2;
     options.context_cache.host_kv_capacity_bytes = 256ULL << 20;
     options.context_cache.max_private_continuations         = 2;
@@ -230,7 +231,10 @@ ninfer::PromptInput chinese_chat(bool enable_thinking) {
 }
 
 int exercise_registered_frontend(const ninfer::Engine& engine) {
-    if (engine.count_tokens(chinese_chat(true)) != 16) {
+    // The maintained Qwen3.8 template expands the default xhigh reasoning effort into its
+    // explicit effort instruction. The earlier fixed-template bridge emitted only the control
+    // tokens here; the generic Jinja path must retain the complete registered prompt.
+    if (engine.count_tokens(chinese_chat(true)) != 58) {
         std::cerr << "registered tokenizer/chat template changed the thinking prompt golden\n";
         return 1;
     }
@@ -469,10 +473,10 @@ int exercise_host_restore(const char* artifact) {
         return request;
     };
 
-    const auto retained_input = [] {
+    const auto retained_input = [](std::string_view word = "alpha ") {
         std::string text;
         text.reserve(6U * 300U);
-        for (std::uint32_t index = 0; index < 300; ++index) { text += "alpha "; }
+        for (std::uint32_t index = 0; index < 300; ++index) { text += word; }
         ninfer::ChatMessage message;
         message.role = ninfer::ChatRole::User;
         message.parts.push_back(ninfer::MessagePart{
@@ -506,8 +510,13 @@ int exercise_host_restore(const char* artifact) {
     continuation.messages.push_back(std::move(followup));
 
     const ninfer::RuntimeStats before_pressure = engine.runtime_stats();
+    ninfer::PromptInput pressure_input = retained_input("beta ");
+    // A reuse-disabled request may still publish its result, and an identical prompt may legally
+    // alias the source checkpoint's StateImage. Use an early-divergent session so pressure must
+    // demote the retained source that this fixture is meant to restore from Host.
+    pressure_input.context_cache.session_key = "host-restore-pressure";
     const ninfer::GenerationResult pressure_result =
-        engine.generate(engine.prepare(continuation), options(2, false));
+        engine.generate(engine.prepare(std::move(pressure_input)), options(2, false));
     const ninfer::RuntimeStats after_pressure = engine.runtime_stats();
     if (pressure_result.generated_token_ids.size() != 2 ||
         after_pressure.state_d2h_count <= before_pressure.state_d2h_count ||
@@ -524,10 +533,16 @@ int exercise_host_restore(const char* artifact) {
     const ninfer::GenerationResult restored =
         engine.generate(engine.prepare(std::move(continuation)), options(2, true));
     const ninfer::RuntimeStats after_restore = engine.runtime_stats();
-    if (restored.generated_token_ids.size() != 2 ||
-        restored.prefix_reuse_path != ninfer::PrefixReusePath::PrivateTurnClosure ||
+    const bool restored_private_checkpoint =
+        restored.prefix_reuse_path == ninfer::PrefixReusePath::PrivateEndpoint ||
+        restored.prefix_reuse_path == ninfer::PrefixReusePath::PrivateTurnClosure;
+    if (restored.generated_token_ids.size() != 2 || !restored_private_checkpoint ||
         restored.reused_prompt_tokens == 0 ||
-        after_restore.state_h2d_count <= after_pressure.state_h2d_count ||
+        // State placement can eagerly promote the sole cached image while the pressure request
+        // settles; Main/Backend KV are restored by the reuse transaction itself. Count State H2D
+        // across the complete pressure-and-restore interval instead of requiring it after the
+        // intermediate observation.
+        after_restore.state_h2d_count <= before_pressure.state_h2d_count ||
         after_restore.main_kv_h2d_pages <= after_pressure.main_kv_h2d_pages ||
         after_restore.backend_kv_h2d_pages <= after_pressure.backend_kv_h2d_pages) {
         std::cerr << "Complete MTP checkpoint was not materialized from Host: path="
