@@ -57,7 +57,7 @@ if ((allow_dirty == 0)) && [[ -n "$(git status --porcelain --untracked-files=nor
 fi
 
 declare -A expected=(
-  [origin]="https://github.com/zhetengv-gif/ninfer-4090.git"
+  [origin]="https://github.com/zheteng-v/ninfer-4090.git"
   [upstream]="https://github.com/Neroued/ninfer.git"
   [sergiuszm]="https://github.com/sergiuszm/ninfer-4090.git"
 )
