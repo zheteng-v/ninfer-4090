@@ -245,7 +245,11 @@ presence of legacy public method declarations must not be reported as working pe
 second increment defines the complete Qwen3.5 staging image, preserves checkpoint StateImage
 aliases, binds physical State/KV layouts, recomputes prefix digests, and validates all data before
 live Program mutation. See [the container report](2026-09-30-v3-snapshot-format.md) and
-[the Program staging-image report](2026-09-30-v3-program-staging-image.md).
+[the Program staging-image report](2026-09-30-v3-program-staging-image.md). The third increment
+adds stable-boundary physical export from a catalogued continuation without allocating replicas or
+changing Program state. It preserves StateImage aliases and canonicalizes mixed Host/Device KV in
+logical order; physical import and atomic publication remain open. See
+[the Program physical-export report](2026-09-30-v3-program-physical-export.md).
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -313,3 +317,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3/sm89 device fast gate | `d44ab584` (`dev` `75a89050`) | `aeeba414` | official v3 artifact boots at 262K INT8 on the 48 GiB 4090; no-spec and MTP3 text pass; MTP3 reaches 110.6 tok/s short decode and 2.14k tok/s medium prefill; production v2 restored after canary |
 | 2026-09-30 | v3 session snapshot container | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined a portable, model-bound, checksummed v3 container and passed focused round-trip/corruption gates; old `NINFSES1` images are rejected; Program export/import and disk publication remain open |
 | 2026-09-30 | v3 Qwen3.5 Program staging image | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined alias-aware State/KV/identity/checkpoint sections and a fully owned pre-publication validation gate; host-only round-trip and negative tests pass, including DFlash2 without paged Backend KV; physical Program store capture/publish remains open |
+| 2026-09-30 | v3 Qwen3.5 Program physical export | `d44ab584` (`dev` `75a89050`) | `aeeba414` | exported catalogued continuations at a stable Program boundary, preserving State aliases and logical KV order across mixed Host/Device placement without residency mutation; PR #335 classified watch/benchmark-first; physical import and publication remain open |
