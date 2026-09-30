@@ -248,8 +248,12 @@ live Program mutation. See [the container report](2026-09-30-v3-snapshot-format.
 [the Program staging-image report](2026-09-30-v3-program-staging-image.md). The third increment
 adds stable-boundary physical export from a catalogued continuation without allocating replicas or
 changing Program state. It preserves StateImage aliases and canonicalizes mixed Host/Device KV in
-logical order; physical import and atomic publication remain open. See
-[the Program physical-export report](2026-09-30-v3-program-physical-export.md).
+logical order. The fourth increment adds transactional physical import: it validates before
+mutation, reserves every State/KV destination before transfer, publishes through a non-throwing
+tail, and rolls failed imports back without changing the catalog or resource revision. Atomic disk
+publication and the Engine slot API remain open. See
+[the Program physical-export report](2026-09-30-v3-program-physical-export.md) and
+[the Program physical-import report](2026-09-30-v3-program-physical-import.md).
 
 ### P3 — recover and exceed the sm89 baseline
 
@@ -318,3 +322,4 @@ release rather than creating a second roadmap.
 | 2026-09-30 | v3 session snapshot container | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined a portable, model-bound, checksummed v3 container and passed focused round-trip/corruption gates; old `NINFSES1` images are rejected; Program export/import and disk publication remain open |
 | 2026-09-30 | v3 Qwen3.5 Program staging image | `d44ab584` (`dev` `75a89050`) | `aeeba414` | defined alias-aware State/KV/identity/checkpoint sections and a fully owned pre-publication validation gate; host-only round-trip and negative tests pass, including DFlash2 without paged Backend KV; physical Program store capture/publish remains open |
 | 2026-09-30 | v3 Qwen3.5 Program physical export | `d44ab584` (`dev` `75a89050`) | `aeeba414` | exported catalogued continuations at a stable Program boundary, preserving State aliases and logical KV order across mixed Host/Device placement without residency mutation; PR #335 classified watch/benchmark-first; physical import and publication remain open |
+| 2026-09-30 | v3 Qwen3.5 Program physical import | `d44ab584` (`dev` `75a89050`) | `aeeba414` | restored validated continuations through fully reserved State/KV destinations and a non-throwing publication tail; focused H2D round-trip and rollback gates pass; PR #335 remains watch/benchmark-first; durable files and Engine methods remain open |
