@@ -110,8 +110,9 @@ only for NInfer; it is not a Transformers checkpoint, Safetensors distribution, 
 | Field | Value |
 |---|---|
 | Filename | `qwen3_8_27b.ninfer` |
-| Size | 20,437,520,896 bytes (19.03 GiB) |
-| SHA-256 | `e91dbf53b99ffd2dc2d83f51fb3dfa0ae0b193f6cf9b439050b8a7e5769c6a5c` |
+| Revision | `1cbd84e7221e51186bd7f093a149912d2489625b` |
+| Size | 20,437,521,664 bytes (19.03 GiB) |
+| SHA-256 | `81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da` |
 | Container version | 3 |
 | Architecture | `Qwen3_5ForCausalLM` |
 | Public model name | `qwen3.8-27b` |
@@ -125,7 +126,7 @@ Verify a downloaded file with:
 
 ```bash
 printf '%s  %s\n' \
-  'e91dbf53b99ffd2dc2d83f51fb3dfa0ae0b193f6cf9b439050b8a7e5769c6a5c' \
+  '81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da' \
   'qwen3_8_27b.ninfer' | sha256sum --check
 ```
 
@@ -139,7 +140,7 @@ retain their stated MTP configurations and revisions.
 ## Requirements
 
 - [NInfer](https://github.com/Neroued/ninfer) revision
-  [`04350ba9`](https://github.com/Neroued/ninfer/commit/04350ba94c203833598ba1a41943031c468208f1)
+  [`98dada0e`](https://github.com/Neroued/ninfer/commit/98dada0e03cb073fd07f905400b5904bc6e82759)
   or later, built from source;
 - 64-bit Linux;
 - NVIDIA GeForce RTX 5090 (`sm_120a`);
@@ -153,6 +154,7 @@ NInfer does not provide an install target or packaged binary. See the
 ```bash
 hf download neroued/Qwen3.8-27B-NInfer \
   qwen3_8_27b.ninfer \
+  --revision 1cbd84e7221e51186bd7f093a149912d2489625b \
   --local-dir models
 
 ./build/apps/ninfer models/qwen3_8_27b.ninfer \
@@ -254,7 +256,7 @@ card reports no AIME results.
 | Download source | `modelscope.cn/models/Qwen/Qwen3.8-27B` |
 | Conversion recipe | `qwen3_8_27b` |
 | Converter repository | `https://github.com/Neroued/ninfer` |
-| Minimum runtime revision | `04350ba94c203833598ba1a41943031c468208f1` |
+| Minimum runtime revision | `98dada0e03cb073fd07f905400b5904bc6e82759` |
 | Ranking input SHA-256 | `c692dc76388132c910547589b4fb4a0503fbd6ad50aaac6a509bbcb192a8afa5` |
 
 The local source configuration, tensor index, frontend resources, and published CRC32 inventory

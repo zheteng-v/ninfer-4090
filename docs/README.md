@@ -1,31 +1,35 @@
 # NInfer documentation
 
-Start with the [project README](../README.md) to build NInfer, download a published artifact, and
-run the CLI or HTTP server.
+Start with the [project README](../README.md): it is the current local **RTX 4090 / sm_89** user
+entry point, covering build, the published artifact, server startup, and the first API call.
+
+Entries marked *upstream / other target* below document the `sm_86` (RTX 3090) applications, the
+published RTX 5090 measurements, or artifacts for other targets. They are references, not
+instructions verified on this machine's 4090.
 
 ## User guides
 
-| Document | Purpose |
-|---|---|
-| [RTX 3090 Linux build](rtx-3090-linux.md) | Docker and native Ubuntu builds for the `sm_86` applications |
-| [CLI](cli.md) | text, chat-history, image/video input, output streams, sampling, MTP, and common runtime options |
-| [HTTP serving](serving.md) | OpenAI Responses/Chat Completions, Anthropic Messages, state, streaming, token counting, authentication, and tool calls |
-| [Performance](performance.md) | RTX 5090 measurement coverage, per-model serving results, methodology, and publication rules |
-| [Weight conversion](weight-conversion.md) | official recipes, custom formats and sources, conversion methods, optional components and artifact output |
-| [Perplexity](perplexity.md) | fixed-corpus and custom-text causal perplexity, comparison rules, progress, and reports |
-| [CLI examples](../examples/cli/) | committed text, multimodal, thinking, long-decode, and long-context inputs |
+| Document | Purpose | Scope |
+|---|---|---|
+| [RTX 3090 Linux build](rtx-3090-linux.md) | Docker and native Ubuntu builds for the `sm_86` applications | upstream / other target (`sm_86`, RTX 3090) |
+| [CLI](cli.md) | text, chat-history, image/video input, output streams, sampling, MTP, and common runtime options | current machine (4090) |
+| [HTTP serving](serving.md) | OpenAI Responses/Chat Completions, Anthropic Messages, state, streaming, token counting, authentication, and tool calls | current machine (4090) |
+| [Performance](performance.md) | RTX 5090 measurement coverage, per-model serving results, methodology, and publication rules | upstream / other target (RTX 5090 published data) |
+| [Weight conversion](weight-conversion.md) | official recipes, custom formats and sources, conversion methods, optional components and artifact output | current machine (4090) |
+| [Perplexity](perplexity.md) | fixed-corpus and custom-text causal perplexity, comparison rules, progress, and reports | current machine (4090) |
+| [CLI examples](../examples/cli/) | committed text, multimodal, thinking, long-decode, and long-context inputs | current machine (4090) |
 
 The executable `--help` output is the exact source for command-line option spelling and defaults.
 
 ## Model artifacts
 
-| Model | Weights | Download | Versioned model card source |
-|---|---|---|---|
-| Qwen3.6-27B | `groupwise-int` | [Hugging Face](https://huggingface.co/neroued/Qwen3.6-27B-NInfer) | [model card](../model-cards/Qwen3.6-27B-NInfer/README.md) |
-| Qwen3.6-27B | `nvfp4` | [Hugging Face](https://huggingface.co/neroued/Qwen3.6-27B-nvfp4-NInfer) | [model card](../model-cards/Qwen3.6-27B-nvfp4-NInfer/README.md) |
-| Qwen3.8-27B | `groupwise-int` | [Hugging Face](https://huggingface.co/neroued/Qwen3.8-27B-NInfer) | [model card](../model-cards/Qwen3.8-27B-NInfer/README.md) |
-| Qwen3.8-27B | `nvfp4` | [Hugging Face](https://huggingface.co/neroued/Qwen3.8-27B-nvfp4-NInfer) | [model card](../model-cards/Qwen3.8-27B-nvfp4-NInfer/README.md) |
-| Qwen3.6-35B-A3B | `groupwise-int` | [Hugging Face](https://huggingface.co/neroued/Qwen3.6-35B-A3B-NInfer) | [model card](../model-cards/Qwen3.6-35B-A3B-NInfer/README.md) |
+| Model | Weights | Download | Versioned model card source | Scope |
+|---|---|---|---|---|
+| Qwen3.6-27B | `groupwise-int` | [Hugging Face](https://huggingface.co/neroued/Qwen3.6-27B-NInfer) | [model card](../model-cards/Qwen3.6-27B-NInfer/README.md) | upstream / other target, not verified on this 4090 |
+| Qwen3.6-27B | `nvfp4` | [Hugging Face](https://huggingface.co/neroued/Qwen3.6-27B-nvfp4-NInfer) | [model card](../model-cards/Qwen3.6-27B-nvfp4-NInfer/README.md) | upstream / other target (`sm_89` has no native FP4) |
+| Qwen3.8-27B | `groupwise-int` | [Hugging Face](https://huggingface.co/neroued/Qwen3.8-27B-NInfer) | [model card](../model-cards/Qwen3.8-27B-NInfer/README.md) | current target on this 4090 |
+| Qwen3.8-27B | `nvfp4` | [Hugging Face](https://huggingface.co/neroued/Qwen3.8-27B-nvfp4-NInfer) | [model card](../model-cards/Qwen3.8-27B-nvfp4-NInfer/README.md) | upstream / other target (`sm_89` has no native FP4) |
+| Qwen3.6-35B-A3B | `groupwise-int` | [Hugging Face](https://huggingface.co/neroued/Qwen3.6-35B-A3B-NInfer) | [model card](../model-cards/Qwen3.6-35B-A3B-NInfer/README.md) | upstream / other target, not verified on this 4090 |
 
 ## Repository-local guides
 

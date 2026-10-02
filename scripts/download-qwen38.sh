@@ -6,10 +6,11 @@ model_dir="${NINFER_MODEL_DIR:-$root/models}"
 model="$model_dir/qwen3_8_27b.ninfer"
 
 mkdir -p -- "$model_dir"
-# Pinned to a container-v2 revision: the Hugging Face main revision moved to container v3 on
-# 2026-09-15, which this engine's reader rejects (artifact magic is not NInfer v2).
-revision='3526913004b1'
-expected_sha256='eec39564993d6e9c7d5e383382a760f093465c9d163ec9a1bd6b80199514bf3e'
+# Pinned to the artifact release commit of the current v3 container (verified with an HTTP HEAD:
+# x-linked-etag matches expected_sha256 and content-length is 20,437,521,664 bytes). The engine
+# loads container v3; the earlier container-v2 pin (revision 3526913004b1) is kept in git history.
+revision='1cbd84e7221e51186bd7f093a149912d2489625b'
+expected_sha256='81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da'
 
 printf '%s\n' "Downloading Qwen3.8-27B NInfer model (revision $revision)..."
 if ! curl -L -C - --fail --output "$model" \

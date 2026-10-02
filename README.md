@@ -1,485 +1,273 @@
 # NInfer-4090
 
-NInfer-4090 is the community `sm_89` downstream dedicated to pushing **48 GiB RTX 4090** cards as
-far as correctness and reproducible engineering allow. Its primary workload is **Qwen3.8-27B**
-with long context, MTP speculative decoding, and native Linux serving. It is an `sm_89` port of
-[NInfer-3090](https://github.com/Don-Chad/ninfer-3090), which derives from
-[Neroued/ninfer](https://github.com/Neroued/ninfer), a specialized C++20/CUDA inference engine.
-The engine loads the official groupwise `.ninfer` artifact, serves OpenAI- and
-Anthropic-compatible APIs, and supports paged KV, compatible-prefix reuse, CUDA Graphs, MTP
-speculative decoding, reasoning-effort control, and ReplaySSM state transactions.
+NInfer-4090 是把 NInfer 推理引擎跑在 **48 GiB NVIDIA RTX 4090(sm_89)** 上的下游分支,原生
+Linux 直接部署(**不需要 Docker**)。引擎是 C++20/CUDA 自研实现,加载官方 `.ninfer` 权重容器,
+通过 CLI 或 HTTP 服务(OpenAI Responses/Chat Completions、Anthropic Messages)提供推理。
 
-This repository is the maintained `zheteng-v/ninfer-4090` downstream. The validated production
-line stays on `main`; upstream-v3 work is integrated on dedicated sync branches before it can
-replace that line. Every iteration starts with an audit of both
-[Neroued/ninfer](https://github.com/Neroued/ninfer) and
-[sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090). See the
-[downstream maintenance contract and roadmap](docs/maintainer/downstream-maintenance.md).
+主要负载是 **Qwen3.8-27B** 长上下文与投机解码。当前生产配置为 **NInfer v3 artifact +
+bound-instance Engine**(2026-10-01 起),已经完整编译并通过发布门禁;上一代
+**v2 artifact + 旧 Engine** 仍以 tag `v2-sm89-production-2026-09-30` 保留,可回退。
 
-The project follows Neroued's architecture and model direction instead of becoming an unrelated
-engine. Generic fixes should go upstream; Ada-specific capability dispatch, kernels, memory
-planning, and 48 GiB profiles stay explicit and measurable here. The goal is to make the resulting
-work useful and reproducible for the wider 48 GiB RTX 4090 community, not to optimize one private
-machine behind unpublished settings.
+这份 README 面向第一次使用的人:按顺序做完就能构建、拿到权重、启动服务并发一次请求。想深挖再看
+文末的文档链接。项目历史与维护边界的说明在
+[docs/maintainer/downstream-maintenance.md](docs/maintainer/downstream-maintenance.md)。
 
-This fork targets `sm_89` and Linux. Blackwell-only NVFP4/W4A4 execution is unavailable; the
-engine uses the same groupwise-int path as the 3090 base. The Windows path and the
-Qwen3.6-35B-A3B target are inherited but untested on the RTX 4090.
+---
 
-The production `main` line uses NInfer artifact v3 and the bound-instance Qwen3.5 runtime
-architecture from upstream. It has been compiled end to end for `sm_89`, and the official
-`qwen3_8_27b_v3.ninfer` artifact has passed host binding for Text, MTP, DFlash2, and Vision.
-It also completes real 262K INT8 device startup and text inference with both no speculation and
-MTP3. Upstream's generic Jinja executor is integrated and has passed reference-template, OpenAI
-tool-call, Vision, and dual-lane 200K probes on the real model. The v3 line also restores live Prometheus
-`/metrics` and passes focused OpenAI/Anthropic streaming, cancellation, queue-timeout, and
-two-lane-isolation gates. The complete release evidence is in the
-[v3/sm89 release record](docs/maintainer/2026-10-01-v3-sm89-release.md); tagged v2 remains the
-rollback line. Performance recovery and Ada-specific optimization are tracked in the
-[RTX 4090 48 GiB performance program](docs/maintainer/sm89-performance-roadmap.md).
+## 这个仓库支持什么 / 不支持什么
 
-## Retained v2 performance baseline on the RTX 4090
+**支持(在本机 4090 + Linux 上验证过)**
 
-Conditions: single request, greedy decoding, CUDA Graphs on, INT8 KV, `--prefill-chunk 1024`,
-official 16.96 GiB Qwen3.8-27B artifact. The code-generation decode row and the prefill rows
-are measured from the `ninfer-serve` `/metrics` counters (computed prefill only); the other
-decode rows use the `ninfer` CLI.
+- 文本推理:CLI([docs/cli.md](docs/cli.md))与 HTTP 服务([docs/serving.md](docs/serving.md))。
+- 上下文:`--max-context` 可开到模型原生上限;长上下文门禁见
+  [发布记录](docs/maintainer/2026-10-01-v3-sm89-release.md)。
+- 投机解码:`--spec mtp|dflash|dflash2 --draft-tokens N`;Qwen3.8-27B 上 MTP 与 DFlash2 都可用。
+- KV 精度:`--kv-dtype bf16|int8|fp8|nvfp4|k8v4`。**速度实验中 KV 不得低于 INT8**(见下文性能一节)。
+- 服务能力:流式输出、工具调用、token 计数、鉴权、Vision 图像/视频输入、会话槽持久化
+  (`--slot-save-path`)、前缀复用、CUDA Graph。
 
-| Test | Result |
+**不支持或未验证**
+
+- 多卡、NVFP4/W4A4 原生加速:**sm_89 没有原生 FP4**,相关路由不可用(发布记录里 13 项 skip 即此类)。
+- Windows 路径与 Qwen3.6-35B-A3B 目标在 4090 上未验证(继承自上游,本分支未测)。
+- 高并发抢占式调度:本引擎是启动期固定的 1–8 路并发、有界 FIFO,不做请求级抢占。
+
+---
+
+## 环境要求
+
+- NVIDIA RTX 4090(48 GiB)、Linux、较新的 NVIDIA 驱动。
+- CUDA 13.1(本分支验证工具链;CUDA 13.4 的对照实验见
+  [roadmap](docs/maintainer/sm89-performance-roadmap.md) 的 H10 项)、GCC 14.2、CMake + Ninja。
+- 权重需要约 20 GB 磁盘与约 18–19 GB 显存(随配置不同,见发布记录的 host load/bind 数据)。
+
+---
+
+## 1. 获取 artifact
+
+**官方 v3 artifact**(2026-10-02 用 HTTP HEAD 核验固定 revision,`x-linked-etag` 与下表 SHA-256 一致):
+
+| 字段 | 值 |
 |---|---|
-| Decode, code generation, MTP3 | **148.6 tok/s** at 81.0% draft acceptance |
-| Decode, bench corpus, MTP3 | 106.5 tok/s at 48.7% acceptance |
-| Decode, no speculation | 50.5 tok/s |
-| Decode at 128K depth, no speculation | 39.6 tok/s |
-| 64K needle-in-a-haystack | exact answer, 1,849 tok/s prefill |
-| 128K needle-in-a-haystack | exact answer, 1,561 tok/s prefill |
-| Vision, chart reading | 3 of 3 oracle facts, 22 ms vision tower |
-| Ops test suite | 78 of 78 runnable tests pass on `sm_89` |
+| 仓库与文件 | `neroued/Qwen3.8-27B-NInfer` → `qwen3_8_27b.ninfer` |
+| Revision | `1cbd84e7221e51186bd7f093a149912d2489625b` |
+| Size | 20,437,521,664 bytes(19.03 GiB) |
+| SHA-256 | `81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da` |
+| Container version | 3 |
 
-MTP acceptance, and with it the decoded rate, tracks how predictable the output is: structured
-code accepts about 81% of draft tokens, the mixed bench corpus about 49%.
-
-The shipping default has since moved from INT8 KV to the E8 4-bit KV mode, which serves the
-model's full native 262,144-token context on this card. Retrieval stays exact through 260K
-(single-needle, 5-needle, and exact-code-detail probes), MTP acceptance at depth is unchanged,
-and the costs against the INT8 numbers above are a 5.7% decode tax and 1-2% of prefill; see
-[Quick start](#text-only-full-262k-native-context-e8-4-bit-kv-default) for the measured deltas.
-
-For scale: llama.cpp on the same card decodes the Qwen3.8-27B `UD-Q4_K_XL` GGUF at about
-46 tok/s in a 144K-context configuration where the MTP buffers do not fit. The upstream engine
-on an RTX 5090 measures 172 tok/s on the same code-generation prompts with a 400 W power cap
-(the upstream README quotes about 200), so this card lands within 14% of it under MTP.
-
-### Depth sweep against llama.cpp
-
-Both engines were measured on the same card. llama.cpp build 10358 ran `llama bench` on the
-`UD-Q4_K_XL` GGUF (16.68 GiB) with q8_0 KV cache, flash attention, and `-ub 1024 -b 4096`,
-which matches its deployed configuration, on 2026-08-15. The NInfer side was re-measured on
-2026-08-17 on the deployed E8 262K configuration through the `/metrics` counters; the
-llama.cpp configuration did not change between the dates. Two caveats: the artifacts differ
-by about 2% in size, and `llama bench` is a bare kernel loop while the NInfer numbers
-include the full server path.
-
-Marginal rates at depth:
-
-| Depth | llama.cpp pp2048 | llama.cpp tg32 | NInfer decode, no speculation |
-|---:|---:|---:|---:|
-| 0 | 3,024 tok/s | 45.9 tok/s | 50.4 tok/s |
-| 32K | 2,327 | 42.0 | - |
-| 64K | 1,866 | 38.6 | - |
-| 128K | 1,336 | 33.1 | 42.1 |
-| 256K | no entry | no entry | 36.6 |
-
-Wall time to prefill one full prompt (llama.cpp integrated from the marginal rates, NInfer
-measured):
-
-| Prompt | llama.cpp | NInfer |
-|---:|---:|---:|
-| 32K | 12.5 s (2,630 tok/s) | 14.5 s (2,027 tok/s) |
-| 64K | 28.3 s (2,317 tok/s) | 31.7 s (1,857 tok/s) |
-| 128K | 70.4 s (1,862 tok/s) | 74.5 s (1,581 tok/s) |
-| 192K | no entry | 127.9 s (1,381 tok/s) |
-| 256K | no entry | 191.7 s (1,228 tok/s) |
-
-The llama.cpp prefill lead narrows with depth. Server-measured, it prefills a 64K prompt in
-28.7 s against 31.7 s (a 10% lead) and a 128K prompt in 71.6 s against 74.5 s (4%); the
-server path costs llama.cpp 2-4% over the bare-loop estimates above. Everything past its
-144K ceiling is NInfer-only. Decode inverts the shallow picture. NInfer leads by 10%
-shallow and by 27% at 128K without speculation, and the MTP3 gap grows with depth:
-
-| Workload | llama.cpp `draft-mtp` | NInfer MTP3 (E8) |
-|---|---:|---:|
-| Code, shallow | 118.8 tok/s at 85.9% acceptance | 142.9 tok/s at 78.0% |
-| Prose, 64K depth | 55.5 tok/s at 45.3% | 86.1 tok/s at 42.3% |
-| Prose, 128K depth | 42.3 tok/s at 45.4% | 77.5 tok/s at 41.6% |
-| Prose, 256K depth | no entry | 65.4 tok/s at 41.1% |
-| Code, 256K depth | no entry | 91.2 tok/s at 72.1% |
-
-The NInfer rows in this table use the 2026-08-17 generated corpora; acceptance on them runs
-a few points below the 2026-08-15 payloads (code 78% against 81%), which accounts for the
-difference from the headline 148.6 tok/s. The llama.cpp MTP rows required a reduced
-131,584-token context; the draft buffers push VRAM
-to 23.8 of 24 GiB, and the deployed 144K llama.cpp configuration cannot fit them at all.
-NInfer serves 172,032 tokens with MTP in the same VRAM at INT8 KV, and the full native
-262,144 with the E8 4-bit KV default. Acceptance matches per content type, so the decode gap
-is engine time, not draft quality.
-
-Full configurations, method, and raw numbers:
-[NInfer against llama.cpp](docs/llamacpp-comparison.md).
-
-## Quick start (Linux)
-
-Requirements: an RTX 4090, a recent NVIDIA driver, Docker with the NVIDIA Container Toolkit.
-
-Build the image and download the model once:
+两种等价做法,都得到仓库根目录下的 `models/qwen3_8_27b.ninfer`(与 `scripts/run-qwen38-c1.sh` 的默认路径一致)。
 
 ```bash
-docker build --tag ninfer-4090:sm89 .
+# 方式 A:仓库自带脚本(已 pin 上面的 revision,并校验 SHA-256)
+# 脚本默认写到 scripts/models,因此显式指定 NINFER_MODEL_DIR 使其落在仓库根的 models/
 NINFER_MODEL_DIR="$PWD/models" bash scripts/download-qwen38.sh
+
+# 方式 B:直接用 Hugging Face CLI 并自行校验(--local-dir models 同样是仓库根的 models/)
+hf download neroued/Qwen3.8-27B-NInfer qwen3_8_27b.ninfer \
+  --revision 1cbd84e7221e51186bd7f093a149912d2489625b \
+  --local-dir models
+printf '%s  %s\n' \
+  '81f924d440c27261d820c19a9f8d45794c5aee410f8a68bd358133fa8c0375da' \
+  'models/qwen3_8_27b.ninfer' | sha256sum --check
 ```
 
-Then start one of the three profiles. The API is available at `http://127.0.0.1:8080/v1`.
+**版本身份(三个都是不同文件,别互相替代)**:
 
-The profiles as written run one generation slot. `--max-concurrency 2` is measured
-and worthwhile on the 4090: the second lane costs about 390 MiB (state pools plus a
-doubled CUDA-graph allowance) while the KV page pool stays shared, so a lone session
-still uses the full context; single-stream decode is unregressed and two sessions
-decode batched at roughly 1.5x aggregate throughput, each lane keeping its own
-resident prefix. Prefill still serializes across lanes, so a deep cold prefill
-delays the other lane's first token.
+| 文件 | Size | SHA-256 | 说明 |
+|---|---|---|---|
+| 当前官方 v3 `qwen3_8_27b.ninfer` | 20,437,521,664 | `81f924d4…` | 上面两种方式下载到的就是它;同时也是本仓[发布记录](docs/maintainer/2026-10-01-v3-sm89-release.md)与性能台账使用的产物(同一字节流) |
+| 上一版 v3(历史) | 20,437,520,896 | `e91dbf53…` | revision `51630a0c…` 的发布内容;若你手上是这份,属于较旧构建 |
+| v2 回退(旧容器) | — | `0634abb0…` | 见发布记录的 v2 回退项 |
 
-When clients edit recent conversation history (a re-serialized reply, tool results
-folded into the previous turn, an updated agent memory block), the server proposes a
-private long anchor at each of the last N message boundaries of every prompt
-(`--auto-long-anchors N`, on by default at the `--max-long-anchors-per-continuation`
-cap of 2) and re-prefills from the anchor below the edit instead of from zero.
-Coverage reaches back exactly as many message boundaries as the retention cap:
-when the anchor set is full the shallowest is evicted, so an edit deeper than the
-cap still re-prefills from zero. Raise `--max-long-anchors-per-continuation` and
-`--auto-long-anchors` together for deeper reach; each retained anchor holds one GDN
-state image (about 147 MiB of host memory on Qwen3.8-27B), so size `--host-state-slots`
-for `continuations x (2 + anchors)`. The old `--turn-checkpoints` ring is retired
-and ignored; see [docs/turn-checkpoint-ring.md](docs/turn-checkpoint-ring.md).
+张量清单、格式分布与许可见 [model-cards/Qwen3.8-27B-NInfer](model-cards/Qwen3.8-27B-NInfer/README.md);
+自己从源权重转换见 [docs/weight-conversion.md](docs/weight-conversion.md)。
 
-Extra requests beyond the slots wait in the admission queue, and the queue deadline
-defaults to 30 seconds. A deep prefill can hold a slot longer than that, so
-parallel agent clients would fail with `request_queue_timeout`. The
-`--pending-timeout-ms 600000` line raises the deadline to 10 minutes. On a
-streaming request the timeout arrives as an in-band SSE error event after HTTP 200;
-a client that does not parse error events sees a stream that ends without a
-`finish_reason`. See [docs/serving.md](docs/serving.md) for the full queue
-contract.
+---
 
-### Text-only, full 262K native context (E8 4-bit KV, default)
-
-The E8 Conway-Sloane lattice KV mode (`rk4v4-e8`, ported from
-[UDPSendToFailed/ninfer-4090](https://github.com/UDPSendToFailed/ninfer-4090); see
-[the fork comparison](docs/udp-fork-comparison.md)) fits the model's entire native
-262,144-token context on 24 GB with 1.4 GiB to spare:
+## 2. 构建
 
 ```bash
-docker run --rm --gpus all --publish 8080:8080 \
-  --volume "$PWD/models:/workspace/models:ro" \
-  ninfer-4090:sm89 \
-  ninfer-serve models/qwen3_8_27b.ninfer \
-  --host 0.0.0.0 --port 8080 \
-  --max-context 262144 --kv-capacity 262144 \
-  --max-concurrency 1 --max-pending-requests 16 \
-  --pending-timeout-ms 600000 \
-  --prefill-chunk 1024 --kv-dtype rk4v4-e8 \
-  --spec mtp --draft-tokens 3 --lm-head-draft \
-  --preserve-thinking
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=89
+cmake --build build -j
 ```
 
-Measured against INT8 KV on this build: identical MTP acceptance at 111K depth
-(78.8% vs 78.4%), a 5.7% decode tax (126.6 vs 134.2 tok/s on a shallow greedy code
-probe), prefill within 1-2% at matched depth, and exact single-needle, 5-needle, and
-code-detail retrieval through 260K tokens.
+产物:
 
-### Text-only, 168K context (INT8 KV, maximum precision)
+- `build/apps/ninfer-serve` — HTTP 服务(下面用它)。
+- `build/apps/ninfer` — 单次调用的 CLI(见 [docs/cli.md](docs/cli.md))。
+
+---
+
+## 3. 启动服务
+
+默认(与 `scripts/run-qwen38-c1.sh` 一致,64K 上下文、MTP3、INT8 KV、单并发):
 
 ```bash
-docker run --rm --gpus all --publish 8080:8080 \
-  --volume "$PWD/models:/workspace/models:ro" \
-  ninfer-4090:sm89 \
-  ninfer-serve models/qwen3_8_27b.ninfer \
-  --host 0.0.0.0 --port 8080 \
-  --max-context 172032 --kv-capacity 172032 \
+./build/apps/ninfer-serve models/qwen3_8_27b.ninfer \
+  --host 127.0.0.1 --port 8080 \
+  --max-context 65536 --kv-capacity 65536 \
   --max-concurrency 1 --max-pending-requests 16 \
-  --pending-timeout-ms 600000 \
   --prefill-chunk 1024 --kv-dtype int8 \
-  --spec mtp --draft-tokens 3 --lm-head-draft \
-  --preserve-thinking
+  --spec mtp --draft-tokens 3 --lm-head-draft
 ```
 
-### With vision, full 262K context (E8 4-bit KV)
-
-The vision scratchpad defaults to 8192 tokens (`--vision-max-tokens`, ported from
-the same fork as the E8 KV modes) instead of the former hardcoded 32768. The
-smaller scratchpad frees about 1.5 GiB, so the full native context fits next to
-vision on 4-bit keys:
+本文性能一节的"短码聚焦"结果用的是另一套 workload(8K 上下文、DFlash2 K7),命令是:
 
 ```bash
-docker run --rm --gpus all --publish 8080:8080 \
-  --volume "$PWD/models:/workspace/models:ro" \
-  ninfer-4090:sm89 \
-  ninfer-serve models/qwen3_8_27b.ninfer \
-  --host 0.0.0.0 --port 8080 \
-  --max-context 262144 --kv-capacity 262144 \
-  --max-concurrency 1 --max-pending-requests 16 \
-  --pending-timeout-ms 600000 \
-  --prefill-chunk 1024 --kv-dtype rk4v4-e8 \
-  --spec mtp --draft-tokens 3 --lm-head-draft \
-  --vision --preserve-thinking
+./build/apps/ninfer-serve models/qwen3_8_27b.ninfer \
+  --host 127.0.0.1 --port 8080 \
+  --max-context 8192 --kv-capacity 8192 \
+  --max-concurrency 1 --prefill-chunk 1024 --kv-dtype int8 \
+  --spec dflash2 --draft-tokens 7 --lm-head-draft
 ```
 
-The vision tower encodes one image at a time, so the scratchpad bounds the size
-of each image, not the number of images or the conversation depth. One
-1024x1024 image costs 1026 vision tokens, and the default admits a single image
-of up to about 2880x2880 pixels. All images in one request share the upstream
-aggregate budget of `min(--max-context, 32768)` vision tokens. Agent clients
-send every earlier image again with each turn, so that aggregate is what a long
-conversation with screenshots uses up. The server rejects an image over the
-scratchpad, or a request over the aggregate, with `media_budget_exceeded`
-before the request reaches the encoder. For large single images or dense video,
-raise the limit with `--vision-max-tokens`. Each additional 1024 tokens of
-scratchpad costs about 62 MiB of VRAM.
+两次首次启动都要建 CUDA Graph:发布记录测到冷建图约 **9.5 分钟**,之后有缓存时 < 8 秒。所有
+选项的权威拼写与默认值以 `./build/apps/ninfer-serve --help` 为准;完整服务契约(队列、超时、
+状态、鉴权、工具调用、Vision)见 [docs/serving.md](docs/serving.md)。
 
-### The tradeoff
+---
 
-KV precision, vision, and maximum context trade against each other on a 24 GB card:
+## 4. 最小 API 调用
 
-| Profile | KV mode | Context | KV runtime | Startup slack |
-|---|---|---:|---:|---:|
-| Text-only, MTP3 | `rk4v4-e8` | 262144 (256K) | 5.08 GiB | 1.37 GiB |
-| Text-only, MTP3 | `rk2v4-e8` | 262144 (256K) | 4.01 GiB | 2.43 GiB |
-| Text-only, MTP3 | `int8` | 172032 (168K) | 6.31 GiB | 136 MiB |
-| With `--vision`, MTP3 | `rk4v4-e8` | 262144 (256K) | 5.41 GiB | 780 MiB |
-| With `--vision` (32K scratchpad), MTP3 | `rk2v4-e8` | 262144 (256K) | 5.85 GiB | 329 MiB |
-| With `--vision` (32K scratchpad), MTP3 | `rk4v4-e8` | 212992 (208K) | 6.06 GiB | 108 MiB |
-| With `--vision` (32K scratchpad), MTP3 | `int8` | 98304 (96K) | - | ~1 GiB |
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3.8-27b",
+    "messages": [
+      {"role": "system", "content": "Answer concisely."},
+      {"role": "user", "content": "What is speculative decoding?"}
+    ],
+    "max_tokens": 128
+  }'
+```
 
-262,144 is the model's own context limit, so `rk2v4-e8` (2-bit keys, 96.2% cosine)
-buys no additional context over `rk4v4-e8` in the text-only profile - only slack.
-That slack is what pays for vision. With the former hardcoded 32,768-token vision
-scratchpad, vision cost about 2.1 GiB (1.83 GiB of runtime buffers plus a
-0.28 GiB tower): INT8 could only afford it at 96K, 4-bit keys topped out at
-212992, and only 2-bit keys fit the full 262,144. The default 8192-token
-scratchpad cuts the cost to about 0.6 GiB, and the full native 262,144 now fits
-alongside vision on 4-bit keys with 780 MiB of slack. The vision
-modes answer a two-swatch color oracle exactly at temperature 0, including with
-the image buried under 52,700 tokens of text on `rk2v4-e8`. `rk2v4-e8` also passes
-the text retrieval gates (single-needle at 260K, 5-needle at 118K, exact code
-details at 168K) at a 10% decode tax (120.5 tok/s on the shallow code probe). The
-INT8 text-only ceiling is near 176K: 172032 starts, and 196608 is rejected at
-startup with a byte-exact deficit. The server validates memory before it listens,
-so an oversized context fails fast instead of at request time.
+Anthropic Messages、Responses 接口、流式、图像输入与工具调用的等价示例都在
+[docs/serving.md](docs/serving.md)。
 
-For a native build, follow the [Linux build guide](docs/rtx-3090-linux.md) with
-`CMAKE_CUDA_ARCHITECTURES=89` (the default in this fork). The build requires CUDA 12.8 or newer,
-GCC 13, and CMake 3.28 or newer; the Docker image builds with CUDA 13.1.
+---
 
-## What this fork changes
+## 5. v2 → v3 有什么不同
 
-- **`sm_89` retarget.** The CMake architecture pin, the runtime compute-capability check, and the
-  NVFP4 stub gate now select `sm_89`. Most SM86 kernel schedules run unmodified on Ada; the
-  INT8 attention prefill schedule is retuned (below).
-- **Ada-retuned INT8 attention prefill.** The SM120 schedule spills registers on Ada and pays the
-  consumer half-rate penalty for f32-accumulate HMMA. Arch-gated for `sm_89`: the full
-  128-register budget, eight paired producer warps over `Bc` column halves with one named-barrier
-  exchange per key tile, byte-permute V dequantization (bit-identical), and fp16-accumulated PV
-  tiles folded into the fp32 running accumulator each tile. The kernel gains 30% at 64K depth
-  (109 to 143 TFLOP/s on the `d256-h24-kv4` INT8 append shape); serve prefill gains 5-7% at
-  88K-128K. Needle-in-a-haystack retrieval stays exact at both depths and all 84 suite tests
-  pass, which bounds the fp16-accumulation numerics change.
-- **Causal-tile partitioned key-block traversal.** Interior key blocks (wholly below the causal
-  diagonal for the whole CTA tile) run a separate instantiation of the key-block body: KV stages
-  with unconditional copies and the softmax drops its masking selects; boundary blocks keep the
-  exact masked path. The idea comes from the
-  [UDPSendToFailed fork](https://github.com/UDPSendToFailed/ninfer-4090) (c5f70526),
-  re-implemented inside the retuned schedule above. Kernel: 144 to 165 TFLOP/s at 32K-224K
-  context on the INT8 append shape (-12 to -13% latency), register count unchanged, bit-exact.
-  End-to-end this is bounded by the attention wall share of this hybrid-GDN model: about +1%
-  serve prefill at 51K on INT8 KV, within noise on the E8 modes, whose staging time is dominated
-  by lattice decode rather than the removed guards.
-- **`/v1/models` reports `context_window`.** Clients without access to a llama.cpp `/props` or a
-  vLLM `max_model_len` can size prompts from the models payload.
-- **llama.cpp-compatible `timings` on chat completions.** Responses and final stream chunks carry
-  a top-level `timings` block (`prompt_n`/`predicted_n`, per-second rates, `ttft_ms`, `cache_n`,
-  `draft_n`/`draft_n_accepted`), so proxies such as llama-swap show per-request prefill and decode
-  rates, MTP draft acceptance, and prefix-cache hits. Contributed by the
-  [shantanusingh16 fork](https://github.com/shantanusingh16/ninfer-4090) of this repository.
-- **`GET /metrics`.** Prometheus counters under llama.cpp-compatible names
-  (`llamacpp:prompt_tokens_total`, `llamacpp:prompt_seconds_total`,
-  `llamacpp:tokens_predicted_total`, `llamacpp:tokens_predicted_seconds_total`,
-  `llamacpp:requests_processing`, `llamacpp:requests_deferred`), so existing scrapers read this
-  server without changes. Processing/deferred occupancy is reserved before prompt preparation
-  or engine submission and held through response release, so accepted work cannot disappear from
-  metrics while queued. Prompt tokens count only computed prefill; prefix-cache hits are excluded,
-  as in llama.cpp. Additional `ninfer:` series report request totals, prefix-cache hits,
-  speculative draft/acceptance totals, live slot occupancy, and slot-operation outcomes.
-- **`GET /slots`.** A llama.cpp-shaped slot table read from the engine's private-continuation
-  catalog: busy slots report their request's prompt and reused-prefix sizes, retained slots report the
-  resident session's depth and its identifying `session_digest`. Truthful per-slot attribution
-  holds at any `--max-concurrency`.
-- **Slot session save/restore.** `--slot-save-path DIR` (off by default) enables llama.cpp-style
-  `POST /slots/{id}?action=save|restore|erase`: one idle slot's complete resident session -
-  paged Text and speculative-backend KV, GDN linear-attention state, retained checkpoints, and
-  prefix identity - moves to or from disk, and a restored slot reuses the cache across server
-  restarts instead of re-prefilling (a 6.9k-token session restores in about 0.1 s against a
-  multi-second reprefill).
-  Sessions are identified by a stable `session_digest`; `/slots`, save, and restore publish it,
-  and `save`/`erase` accept an `if_digest` precondition checked
-  atomically, so a client always persists exactly the session it means. A restored session is
-  reusable from its endpoint or a retained checkpoint. Images bind to the exact artifact,
-  runtime layout, KV geometry, and speculative backend. Details in
-  [docs/serving.md](docs/serving.md).
-- **Reuse-aware lane choice.** When prefix reuse ties (typically zero for a fresh session),
-  admission picks the lane whose occupation costs least to replace - an empty lane before any
-  retained session, then the shallowest - so a burst request no longer evicts a deep resident
-  session while a free lane exists.
-- **Automatic long anchors.** `--auto-long-anchors N` (default: the
-  `--max-long-anchors-per-continuation` cap) has the server propose a private long anchor at
-  each of the last N message boundaries of every prompt. Upstream's long anchors exist only
-  where a client places an explicit `PrivateLongAnchor` marker, which no OpenAI or Anthropic
-  request can express, so without this flag a rewrite deeper than the last assistant reply
-  has no reuse candidate at all and re-prefills from token zero. With it, the prompt restores
-  at the anchor below the edit. A full anchor set replaces its shallowest entry, so the
-  retained anchors track the most recent boundaries and coverage reaches back exactly the
-  cap: an edit deeper than `--max-long-anchors-per-continuation` boundaries still re-prefills
-  from zero, so raise the cap and this flag together (and `--host-state-slots` with them) for
-  deeper history. Measured on agent traffic, 94% of consecutive prompts are pure appends and
-  96.5% of the remaining history rewrites are two messages deep or less, so the default cap of
-  2 covers 99.8% of turns. The rare deeper edits replace the whole history from message one or
-  two, where no anchor can help. Anchors ride the existing catalog, pressure planner and slot
-  snapshots. This replaces the retired `--turn-checkpoints` ring
-  ([docs/turn-checkpoint-ring.md](docs/turn-checkpoint-ring.md)).
-- **Auto-save on eviction.** `--auto-save-evicted` (off by default, requires
-  `--slot-save-path`) spills an involuntarily evicted session - endpoint, rewrite checkpoint
-  and long anchors included - back to the slot file it was last saved to or restored from,
-  before the eviction destroys it. Rotating more sessions than slots then loses nothing: the
-  next restore recovers the session at its latest frontier. Explicit `erase` never auto-saves.
-  Two rules keep a spill from losing data. First, a slot file is bound to at most one slot at
-  a time: the most recent `save` or `restore` of a path owns it, and every other slot that held
-  the same path is unbound. A stale copy of a session, left behind when a restore retains its
-  source, therefore cannot write the file when it is evicted. Second, a spill never rolls a
-  file back: a spill with fewer tokens than the file already holds is refused and logged as
-  `slot auto-save SKIPPED`, while an explicit `save` always wins. Without these rules a
-  two-day-old copy of a live session once overwrote its 78k-token file, and the client resumed
-  the rolled-back state.
-- **Planner diagnostics in the request JSONL.** `--request-log-jsonl FILE` records, per
-  request, the reuse path the planner chose (`prefix_reuse_path`), the prefix tokens it reused,
-  and the materialization search behind the choice: `stop_reason`, `budget_exhausted`,
-  `selected_maximal_fallback`, `targets_evaluated`, and `best_reuse_prompt_tokens`, the most
-  reuse any candidate offered. That last field separates the two causes of a cold prefill. A
-  value of `0` means that no reuse candidate existed, so the cause sits upstream of the planner:
-  a missing anchor or a changed prefix. A large value beside `prefix_reuse_path=root` means
-  that a candidate existed and the planner rejected it, which points at the search itself.
-  `/metrics` carries only the llama.cpp-compatible subset, so this file is the only place these
-  fields appear. Field reference in [docs/serving.md](docs/serving.md).
-- **NVFP4-A4 test gating.** The A4 activation tests skip on hardware without FP4 tensor cores
-  instead of aborting. The full remaining suite passes on the RTX 4090.
-- **E8 lattice KV quantization (ported).** The `rk8v4`/`rk4v4`/`rk4v4-e8`/`rk2v4-e8` KV modes
-  and the 262K-to-1M visible-keys envelope lift from the
-  [UDPSendToFailed/ninfer-4090](https://github.com/UDPSendToFailed/ninfer-4090) sibling fork,
-  merged under this fork's retuned `sm_89` attention prefill schedule. The E8 codec verifies
-  bit-exactly against the upstream microbenchmark (96.155% / 98.678% cosine); their 1 GiB
-  CUDA-graph allowance bump was deliberately not taken (it would evict the INT8 168K profile).
-  Method and measurements in [docs/udp-fork-comparison.md](docs/udp-fork-comparison.md).
-- **Configurable vision scratchpad (ported).** `--vision-max-tokens` comes from the same fork
-  and sizes the vision encode workspace (default 8192 tokens, formerly hardcoded 32768). This
-  fork additionally wires the processor's single-item budget to the same limit, so an
-  over-limit image fails as `media_budget_exceeded` instead of reaching an undersized encoder.
-  The aggregate budget over all images in a request stays at upstream's 32768 tokens.
+按发布记录([2026-10-01-v3-sm89-release.md](docs/maintainer/2026-10-01-v3-sm89-release.md)):
 
-## Known limits on the RTX 4090
+- **容器与运行时**:改用 **NInfer artifact v3** 与 bound-instance `Qwen3.5` 运行时架构;
+  Engine 与 artifact 绑定实例化,不再走旧的全局装配。
+- **服务与持久会话**:恢复 **durable session slots** 与完整 Serve 契约(会话槽保存/恢复、
+  前缀复用、host 状态恢复);v2 时期这些能力不完整。
+- **长上下文**:通过 128K/256K 级别的长上下文正确性矩阵(64K NIAH 与 oracle 逐位一致)。
+- **多模态与协议**:Vision 图像/视频输入与 OpenAI Responses/Chat Completions、Anthropic
+  Messages 两套协议都在同一服务里。
+- **sm_89 路由**:v3 落地时把若干热点切到 Ada 上更合适的实现(见下文"Op 级正向改动"),
+  并保留可回退的 v2 生产 tag。
 
-- Prefill trails llama.cpp by 16-24% on full 32K-128K prompts under matched conditions (see
-  the depth sweep above). The rate is flat across `--prefill-chunk` 1024 to 2688, so the
-  chunk size is not the lever. With the attention schedule retuned, the remaining gap sits in
-  the custom quantized GEMMs, which run about 10% below cuBLAS on Ada. Decode is where this
-  engine leads.
-- Keep `--prefill-chunk` at 2688 or below. This fork carries measured `sm_89` cooperative
-  residency tables (the former hard abort above chunk 1024 is fixed), and chunks through 2688
-  stay on split-K. Larger chunks route to the unsplit schedule, which is marginally less
-  accurate at its onset (about 1e-5 relative).
-- `--max-concurrency 2` is measured on the 4090 (see Quick start); higher lane counts are
-  untested here, and the published cohort results in the
-  [3090 base](https://github.com/Don-Chad/ninfer-3090) do not transfer directly.
-- Prefill is strictly serialized across lanes with no chunk-level interleaving, and decode
-  starves while any prefill runs: a short request submitted behind a 31k-token cold prefill
-  measured a 13.5 s first token. Concurrency pays off for decode and for per-lane resident
-  prefixes, not for prefill fairness.
-- The limits of the base engine apply: one process, one GPU, one model, bounded FIFO admission,
-  no multi-GPU execution, no weight offload.
+---
 
-## Artifact
+## 6. 当前性能研究的真实结果
 
-| Model | Artifact | Revision | Size | SHA-256 |
-|---|---|---|---:|---|
-| Qwen3.8-27B | [official NInfer groupwise artifact](https://huggingface.co/neroued/Qwen3.8-27B-NInfer) | `3526913004b1` (2026-08-14, container v2) | 16.96 GiB | `eec39564993d6e9c7d5e383382a760f093465c9d163ec9a1bd6b80199514bf3e` |
-| Qwen3.8-27B + DFlash2 weights | same repository | `dc370fb6295a` (2026-09-06, container v2) | 19.03 GiB | `0634abb07024221de141456cf04a42ab74b18bc38e1b781c6eb2e062a467eec3` |
+所有数字都带 workload。**Op 级收益不等于端到端收益**,下面分开写。
 
-The download scripts fetch the pinned `3526913004b1` revision, which is the artifact this fork is
-validated with. The artifact is architecture-independent; the model card's RTX 5090 requirement
-describes the upstream engine, not the file. The `dc370fb6295a` revision adds the DFlash2 draft
-weights and loads on the same engine (`--spec dflash2 --draft-tokens 3` to use them).
+### 6.1 单请求(C1)聚焦 workload
 
-**Do not download the `main` revision.** Since 2026-09-15 it is a container-v3 artifact with a
-maintained jinja chat template. This fork reads container v2 only and rejects v3 with
-`artifact magic is not NInfer v2`; v3 support arrives with the next upstream catch-up.
+workload:V3 artifact、`scenario_code_python` fixture、seed 7632647173703958409、
+8192 上下文、INT8 KV、输出 4096 token、单请求、同一二进制。
 
-## Reasoning effort
+| 配置 | 解码吞吐 | 每轮设备时间 | 接受率 | 每轮 token |
+|---|---|---|---|---|
+| **DFlash2 K7(当前聚焦配置)** | **213.17 tok/s** | 24.203 ms | 59.56% | 5.169 |
+| MTP3(同 binary / 同 fixture) | 147.56 tok/s | 22.843 ms | 79.10% | 3.373 |
 
-Qwen3.8-27B has three trained reasoning depths plus an off switch. OpenAI Chat Completions
-accepts a top-level `reasoning_effort` field (`low`, `medium`, `xhigh`) and a top-level
-`enable_thinking` boolean; hidden reasoning returns separately as `message.reasoning_content`.
-Only those three levels are accepted, plus `none` to turn thinking off. `high`, `minimal`, and
-`max` are rejected as `reasoning_effort_not_supported`, so a client that offers a `high` setting
-must map it to `xhigh`. A token budget for reasoning is separate from the effort level. It is
-set only through the Anthropic Messages path (`thinking.budget_tokens`) or server-wide with
-`--default-thinking-budget N`; the OpenAI paths have no field for it. Without a budget,
-reasoning is bounded only by the request's `max_tokens`, which is what the model card
-recommends, and the `model_thinking_tokens` field of the request JSONL reads zero, because that
-counter runs only under a budget. The `chat_template_kwargs` request field of llama.cpp is not
-supported and is rejected. For the CLI, pass `--reasoning-effort` or `--no-thinking`. Sampling
-defaults come from the model card and switch with the thinking mode: `temperature=1.0`,
-`top_p=0.95`, `top_k=20` in thinking mode; `temperature=0.7`, `top_p=0.80`, `top_k=20`,
-`presence_penalty=1.5` in non-thinking mode.
+结论:短码 workload 上 **DFlash2 K7 明显优于 MTP3**;K6 为 186.39 tok/s,窗口调大或调小都更差。
+注意保存的 V2 基线(153.67 tok/s)用的是 **MTP3**,而当前配置是 DFlash2 K7:这是**跨投机后端**的对比,
+不是同一后端的版本 A/B,+38.7% 只表示两端各自最佳配置之间的距离;同一后端(V2 → V3 优化 MTP3)的对照
+见下文 6.6 与发布记录。
 
-## Serving APIs
+### 6.2 并发(聚合)workload —— 与 6.1 不是同一个指标
 
-OpenAI Chat Completions, OpenAI Responses with streaming and local continuation state, Anthropic
-Messages, prompt-rendered function tools with parsed tool calls, compatible-prefix reuse, and
-JSONL request logs. See [HTTP serving](docs/serving.md) and [CLI usage](docs/cli.md).
+workload:DFlash2 K7、8192 上下文、INT8 KV、decode-saturation,同时跑 N 路请求。
 
-## Upstream and credits
+| 并发 | 聚合吞吐 | 稳态 batch |
+|---|---|---|
+| C=2 | 125.7 tok/s | 2 |
+| C=4 | 218.7 tok/s | 4 |
+| C=8 | 348.5 tok/s | 8 |
 
-- [Neroued/ninfer](https://github.com/Neroued/ninfer) - the engine, developed for the RTX 5090
-  (`sm_120a`).
-- [Don-Chad/ninfer-3090](https://github.com/Don-Chad/ninfer-3090) - the SM86 compatibility layer,
-  ReplaySSM integration, and Qwen3.8 runtime support this fork builds on. Its
-  [v0.6.1 release notes](RELEASE_NOTES_0.6.1.md) describe the inherited state.
-- [UDPSendToFailed/ninfer-4090](https://github.com/UDPSendToFailed/ninfer-4090) - a sibling
-  RTX 4090 port from the same 3090 base. The rotated and E8-lattice KV-cache quantization
-  modes (`rk8v4`, `rk4v4`, `rk4v4-e8`, `rk2v4-e8`), the E8 codecs, and the 1M visible-keys
-  envelope are their work, cherry-picked here with authorship preserved. The full 262K
-  default profile exists because of it; see
-  [the fork comparison](docs/udp-fork-comparison.md).
-- [jram4/ninfer-4090](https://github.com/jram4/ninfer-4090) - an earlier RTX 4090 port of a July
-  2026 snapshot. Its Ada dispatch tuning targets a kernel organization that upstream has since
-  replaced, so this fork starts from the current 3090 base instead.
+聚合吞吐**不是**单请求延迟:并发翻倍并不带来吞吐翻倍(限制在 GPU 批内 device work)。要比较
+"单用户更快",看 6.1;要比较"机器总产出",看 6.2。
 
-## Support
+### 6.3 64K 长上下文(C1)
 
-NInfer is a personal project that I develop out of interest. If you find it useful and would like
-to support its continued development, you can [support the project on Ko-fi](https://ko-fi.com/neroued).
+workload:NIAH、INT8 KV,v3 与 v2 同条件对照(发布记录)。
 
-Support is entirely voluntary. It is not a purchase or investment and does not come with financial
-returns, promised services or features, or a role in project decisions. The project's direction,
-priorities, technical choices, and release schedule remain independently determined by the
-maintainer.
+| 指标 | v2 | v3 | 差异 |
+|---|---|---|---|
+| 64K NIAH prefill | 1,884.70 tok/s | 1,884.52 tok/s | −0.01% |
+| 64K NIAH decode | 149.59 tok/s | 149.44 tok/s | −0.10% |
 
-## License
+长上下文**持平**;两段 64K 回答都与 oracle 逐位一致。
 
-Apache License 2.0. See [LICENSE](LICENSE).
+### 6.4 已落地的 Op 级正向改动(实测值,仅代表该算子)
+
+| 算子 / 形状 | 旧路由 | 现路由 | Op 级变化 |
+|---|---|---|---|
+| attention Q5 gate/value,T=8,split-output | 57.344 µs | 39.936 µs | −30.4% |
+| GDN QK Q4,T=8 small-T MMA | 35.840 µs | 31.744 µs | −11.4% |
+| GDN value/z Q5,T=8 K-split(生产输出形态) | 81.920 µs | 66.560 µs | −18.75% |
+
+口径:cold-L2(256 MiB flush)、median、单算子(不含端到端)。**这些是 Op 级数字**;端到端是否
+受益取决于该算子在每轮里的占比与接受率是否变化。已有反例:attention QKV Q4 的 small-T 候选
+Op 级快 30.4%,但同 binary 的 K7 请求反而 −1.14%,因此**已回退生产路由**。
+
+### 6.5 被证否 / 已关闭的方向(负面结果同样记录)
+
+| 方向 | 结果 | 处理 |
+|---|---|---|
+| DFlash2 K8(窗口 8) | 119.58 tok/s(−43.9%) | 关闭 |
+| MTP K3/K4(短码) | 147.56 / 149.28 tok/s,均低于 K7 | 保留 K7 |
+| Q5 → Q4 表示层(LinearAdd 两类形状) | Op 级反而慢 7.5–11.6%(合计 +0.918 ms/轮) | 关闭,不做转换 |
+| Q4 SwiGLU 行合并 / CTA 内双缓冲 | −2.7% / +0.67%(噪声内) | 已回退原型 |
+| 跨 CTA K 切分 | 两点判别显示"固定开销"模型成立,方向为负 | 不做 |
+| 七项热点审计(recurrent_record、attention small-T、RMSNorm、gdn_norm_gating、GDN conv prepare、gdn_projected_conv、记账+context/KV) | 合计 1.78 ms/轮,但分散在 ≥7 个互不相关算子,现实可回收 ≈0.24–0.44 ms/轮(推算) | 单项均不可单独达标 |
+| GDN conv prepare `Columns=8→16` | Op 级 correctness 逐位一致,但 median ratio 1.0000、saving 0 | 已测关闭并回退 bench |
+
+### 6.6 与目标的关系,以及数据边界
+
+- 目标是把 C1 的 K7 从 213.17 提到 **230.5 tok/s(+8.1%,约需 −1.81 ms/轮)**。
+- 按目前证据,这个缺口**没有被任何已知可执行项覆盖**:上面 6.5 列出的残余量与目标差 4–8 倍;
+  想达标需要改变前提(例如更激进的权重表示、更好的草案质量/训练,或者改换记分口径到并发聚合)。
+- **不给出成功率**:多数性能点是单样本;本机 Nsight Compute 因权限不可用(`ERR_NVGPUCTRPERM`),
+  所以"有效带宽/延迟受限"一类判断是从字节与时间推算出来的,不是 DRAM/L2 计数器读数。
+- **KV 精度底线**:不得用低于 INT8 的 KV 换速度(FP8 KV 不作为提速手段)。
+- 短码 MTP 相比 v2 约慢 6%,与上面"K7 更快"不矛盾——两者 workload 不同,发布记录把它列为
+  明确的后续目标,而不是用最好看的数字覆盖。
+
+完整实验台账(含每次 A/B 的命令、门限与结论)在
+[docs/maintainer/sm89-performance-roadmap.md](docs/maintainer/sm89-performance-roadmap.md);
+每模型基线是上游 **RTX 5090** 的历史测量(本页只把它当来源引用,**不是本机 4090 结果**)见
+[docs/performance/qwen3.8-27b.md](docs/performance/qwen3.8-27b.md);
+发布数据在 [docs/performance/data/v3-sm89-release-2026-10-01.json](docs/performance/data/v3-sm89-release-2026-10-01.json)。
+
+---
+
+## 7. 从哪里继续读
+
+| 想做的事 | 看这里 |
+|---|---|
+| 命令行、采样、投机解码、图像输入 | [docs/cli.md](docs/cli.md) |
+| HTTP 服务、协议、流式、状态、鉴权、工具调用 | [docs/serving.md](docs/serving.md) |
+| 权重转换与自定义格式 | [docs/weight-conversion.md](docs/weight-conversion.md) |
+| v3 发布内容、门禁、不可变输入 | [docs/maintainer/2026-10-01-v3-sm89-release.md](docs/maintainer/2026-10-01-v3-sm89-release.md) |
+| 性能路线图与实验台账 | [docs/maintainer/sm89-performance-roadmap.md](docs/maintainer/sm89-performance-roadmap.md) |
+| 跑测试 | [tests/README.md](tests/README.md) |
+| 跑基准 | [bench/README.md](bench/README.md) |
+| 全部文档入口 | [docs/README.md](docs/README.md) |
+
+---
+
+## 上游与许可
+
+本分支是 [Neroued/ninfer](https://github.com/Neroued/ninfer) 的 `sm_89` 下游,并参考
+[sergiuszm/ninfer-4090](https://github.com/sergiuszm/ninfer-4090) 的 Ada 适配。通用修复应回到
+上游;Ada 专属的能力分派、kernel、显存规划与 48 GiB 配置留在这里,并保持可度量。
+
+许可证见 [LICENSE](LICENSE);模型权重遵循其各自发布页面的许可。
