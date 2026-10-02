@@ -145,20 +145,60 @@ runner usage and output files.
 `run_serve_corpus.py` accepts explicit `--artifact LABEL=PATH` entries. Labels identify report groups;
 the selected artifact supplies the architecture, public name and weight bindings.
 Omitting `--mode` selects MTP0 and MTP3; repeat `--mode` to select a subset. Use `dflash7` for
-Qwen3.6-35B-A3B DFlash K=7 and `dflash2_7` for Qwen3.8-27B DFlash2 K=7, with companion weights
-in the selected artifact. `--sampling greedy` selects exact argmax; the default is stochastic.
+Qwen3.6-35B-A3B DFlash K=7, `dflash2_7` for Qwen3.8-27B DFlash2 K=7, and `dflash2_8` for the same
+artifact at K=8 (block=9), with companion weights in the selected artifact. `--sampling greedy`
+selects exact argmax; the default is stochastic.
 Run commands with a selected Python 3.11 interpreter, as in the model-page reproduction entries.
 
 The serial runner writes `run.jsonl`, `summary.csv`, `summary.md`, and per-server logs under
 `server/`. JSONL contains the completed requests and responses; CSV/Markdown contain fixture and
 category summaries. The output directory is supplied explicitly with `--output`.
 
-Its schema-v7 result and flattened summaries retain the actual `prefill_signature`, request Host
+Its schema-v9 result and flattened summaries retain the selected KV dtype, `max_context`, actual `prefill_signature`, request Host
 exposure, and decode Host/Device-wait time per round received from the schema-v21 serving records.
 Request exposure is a latency distribution value and is never summed across concurrent requests;
 worker aggregation uses the serving `throughput.host_work` interval deltas. The stochastic route pins its complete
 temperature/top-p/top-k/min-p/presence/frequency profile explicitly, so model-default changes do
 not alter the measurement method.
+
+`run_sm89_phase0.py` controls the RTX 4090 v2/v3 comparison. It takes explicit
+`LABEL=NINFER_SERVE=MODEL_NINFER` candidate pairs, keeps INT8 and FP8 KV in separate result
+trees, and preserves the fixed sampling profile, 1,024-token prefill chunk, disabled prefix
+reuse, and MTP3 C=1/2/4/8 decode controls. `--phase screen` runs one fixed seed for the 7,680
+token MTP0 prefill control and short code controls before `--phase full` runs five-seed corpus
+and saturation points. Each candidate/KV tree contains a `manifest.json` with candidate and
+runner-source hashes plus the selected host/GPU environment; resume rejects a manifest whose
+source, candidate, request, or environment identity differs. Per-run server records retain the
+actual CUDA ordinal and GPU UUID/name. The retained v2 server log is schema 20 and has no prefill
+signature; that absence is explicitly recorded as `unreported-v2-schema20`.
+
+For a focused speculative sweep without long-context or concurrency restarts, repeat
+`--screen-mode` to select only the required routes. `mtp4` and `dflash2_6` are supported alongside
+`mtp3` and `dflash2_7`; `--screen-fixture` and `--screen-seed` keep each request paired. For example:
+
+`--screen-max-context N` sets both `--max-context` and `--kv-capacity` for screen corpus servers
+only (default: 262144).
+The corpus runner verifies that the selected fixture's manifest `prompt_tokens` plus `max_new`
+fits, records the value in each schema-v9 result and summary, and rejects resume data from a
+different context. The full phase keeps the default 262144 context and rejects a custom screen
+context. For example, `scenario_code_python` has 122 prompt tokens and a 4,096-token completion
+cap, so 8,192 is sufficient for a short-context profile while reducing high-position graph/KV
+allocation. This setting is only a short-request screening optimization; it does not qualify
+long-context performance or replace the 262144-context controls.
+
+```bash
+python3 tools/bench/run_sm89_phase0.py \
+  --candidate v3=/path/to/ninfer-serve=/path/to/qwen3_8_27b_v3.ninfer \
+  --kv-dtype fp8 \
+  --output profiles/bench/phase0-focused \
+  --screen-mode mtp3 --screen-mode mtp4 \
+  --screen-mode dflash2_6 --screen-mode dflash2_7 \
+  --screen-fixture scenario_code_python --screen-seed 7632647173703958409
+```
+
+This focused form starts one fresh server per selected mode and omits the baseline MTP0 and
+concurrency points. Keep the same fixture, seed, KV dtype, and candidate settings when comparing
+against existing control records; use a fresh output tree when changing the screen definition.
 
 ## Concurrent serving benchmark
 

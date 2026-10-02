@@ -147,6 +147,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="shared Main KV capacity passed to ninfer-serve (default: 262144)",
     )
     parser.add_argument("--prefill-chunk", type=int, default=1024)
+    parser.add_argument(
+        "--kv-dtype",
+        choices=corpus.KV_DTYPES,
+        default="int8",
+        help="KV representation for every point (default: int8)",
+    )
     parser.add_argument("--output", type=Path, required=True, help="benchmark output directory")
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
     parser.add_argument("--device", type=int, default=0, help="CUDA device index")
@@ -305,7 +311,7 @@ def server_command(
         "--request-log-jsonl",
         str(server_log),
         "--kv-dtype",
-        "int8",
+        args.kv_dtype,
         "--no-prefix-reuse",
     ]
     if point.speculative_backend != "none":
@@ -355,7 +361,7 @@ def validate_server_start(
         "pending_timeout_ms": PENDING_TIMEOUT_MS,
         "prefill_chunk": args.prefill_chunk,
         "log_stats_interval_ms": STATS_INTERVAL_MS,
-        "kv_cache": "int8-group64",
+        "kv_cache": corpus.kv_cache_name(args.kv_dtype),
         "cuda_graph": True,
         "prefix_reuse": False,
         "speculative_backend": point.speculative_backend,
@@ -375,11 +381,9 @@ def validate_server_start(
         raise corpus.CampaignError("server public model id does not match the point")
 
     server_instance_id = event.get("server_instance_id")
-    prefill_signature = event.get("artifact", {}).get("prefill_signature")
     if not isinstance(server_instance_id, str) or not server_instance_id:
         raise corpus.CampaignError("server_start has no server_instance_id")
-    if not isinstance(prefill_signature, str) or not prefill_signature:
-        raise corpus.CampaignError("server_start has no canonical prefill_signature")
+    prefill_signature = corpus.server_start_prefill_signature(event)
     return server_instance_id, prefill_signature
 
 
@@ -784,7 +788,7 @@ def run_point(
             # HTTP response, before this collector is joined.
             detail_dir = output_dir / "corpus" / point.key
             detail_dir.mkdir(parents=True, exist_ok=True)
-            records: dict[tuple[str, str, str, str, int], dict[str, Any]] = {}
+            records: dict[tuple[str, str, str, str, str, int, int, int], dict[str, Any]] = {}
             with (
                 (detail_dir / "results.jsonl").open("w", encoding="utf-8") as handle,
                 ThreadPoolExecutor(max_workers=1) as collector,
@@ -802,6 +806,8 @@ def run_point(
                         sampling_mode=point.sampling_mode,
                         fixture=job.fixture,
                         seed=job.seed,
+                        kv_dtype=args.kv_dtype,
+                        max_context=args.max_context,
                     )
                     record = corpus.build_result_record(
                         spec, prefill_signature, request_payload(point, job), response, event

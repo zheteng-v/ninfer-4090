@@ -111,6 +111,7 @@ struct Options {
     bool profile        = false;
     bool graph          = false;
     int graph_calls     = 1;
+    int device          = 0;
     QType qtype         = QType::Q4_G64_FP16;
     LinearPolicy policy = LinearPolicy::A16Only;
     std::int32_t n      = 0;
@@ -336,6 +337,7 @@ void usage(const char* argv0) {
                  "[options]\n"
                  "  %s --suite qwen3_6_27b|qwen3_6_35b_a3b|all [options]\n\n"
                  "Options:\n"
+                 "  --device N        CUDA device ordinal (default 0).\n"
                  "  --policy a16|a8|a4 Activation-compute policy (default a16).\n"
                  "  --execution MODE   eager (default) or graph; time the complete Op.\n"
                  "  --graph-calls N    Calls per timed graph (1..64, default 1); report per call.\n"
@@ -359,6 +361,8 @@ Options parse_args(int argc, char** argv) {
         if (arg == "--qtype") {
             opt.qtype      = parse_qtype(next("qtype"));
             opt.have_qtype = true;
+        } else if (arg == "--device") {
+            opt.device = parse_nonnegative_int(next("device"), "device");
         } else if (arg == "--policy") {
             opt.policy = parse_policy(next("policy"));
         } else if (arg == "--n") {
@@ -771,6 +775,7 @@ void print_header(const Options& opt) {
     std::printf("# dense_fp8_tensor_tflops fp16_acc=%.1f fp32_acc=%.1f\n",
                 kRtx5090Fp8Fp16AccumulateTFLOPs, kRtx5090Fp8Fp32AccumulateTFLOPs);
     std::printf("# dense_bf16_tensor_tflops fp32_acc=%.1f\n", kRtx5090Bf16Fp32AccumulateTFLOPs);
+    std::fflush(stdout);
 }
 
 void print_results(const std::vector<Result>& results) {
@@ -865,6 +870,12 @@ int main(int argc, char** argv) {
             std::printf("SKIP: no usable CUDA device\n");
             return 0;
         }
+        if (opt.device >= device_count) {
+            throw std::invalid_argument("--device ordinal " + std::to_string(opt.device) +
+                                        " is unavailable; detected " +
+                                        std::to_string(device_count) + " CUDA device(s)");
+        }
+        CUDA_CHECK(cudaSetDevice(opt.device));
 
         cudaStream_t stream = nullptr;
         CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));

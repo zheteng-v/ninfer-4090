@@ -32,6 +32,7 @@ These are recorded experimental settings, not promises about current executable 
 | MTP3 | `mtp3` | `--spec mtp --draft-tokens 3 --lm-head-draft` |
 | DFlash, block=8 | `dflash7` | `--spec dflash --draft-tokens 7 --lm-head-draft` |
 | DFlash2, block=8 | `dflash2_7` | `--spec dflash2 --draft-tokens 7 --lm-head-draft` |
+| DFlash2, block=9 | `dflash2_8` | `--spec dflash2 --draft-tokens 8 --lm-head-draft` |
 
 `K` denotes draft tokens; block size is `K+1`. Weight format, backend, draft count, and proposal
 head are separate experimental dimensions.

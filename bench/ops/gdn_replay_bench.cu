@@ -35,6 +35,7 @@ constexpr std::int32_t kQkHeads        = 16;
 constexpr std::int32_t kStateDim       = 128;
 constexpr std::int32_t kRecordCapacity = 8;
 constexpr std::int32_t kStateSlots     = 11;
+constexpr int kGraphTimingRepeats      = 16;
 constexpr std::size_t kDefaultFlush    = 256ULL << 20;
 
 enum class ProfileSelection : std::uint8_t {
@@ -77,6 +78,7 @@ struct Options {
     ValidSelection valid         = ValidSelection::All;
     std::int32_t exact_width     = 0;
     std::int32_t exact_batch     = 0;
+    bool recurrent_cuda_graph    = false;
     int warmup                   = 10;
     int repeat                   = 50;
     std::size_t flush_bytes      = kDefaultFlush;
@@ -86,6 +88,7 @@ struct Measurement {
     bench::ColdTiming warm;
     bench::ColdTiming cold;
     double host_median_us = 0.0;
+    bool cuda_graph       = false;
 };
 
 std::int32_t parse_i32(std::string_view text, const char* label, std::int32_t minimum,
@@ -138,6 +141,7 @@ void print_help(const char* program) {
                 "  --commits one|dense|mixed|all\n"
                 "                              Commit policy (default all).\n"
                 "  --valid dense|mixed|all     Recurrent valid-prefix policy (default all).\n"
+                "  --recurrent-cuda-graph     Capture recurrent-record timing in a CUDA Graph.\n"
                 "  --warmup N                  Warmups per point (default 10).\n"
                 "  --repeat N                  Samples per point (default 50).\n"
                 "  --flush-mib N               Cold-L2 eviction storage (default 256 MiB).\n"
@@ -165,6 +169,8 @@ Options parse_options(int argc, char** argv) {
             options.commits = parse_commits(next("commit policy"));
         } else if (argument == "--valid") {
             options.valid = parse_valid(next("valid policy"));
+        } else if (argument == "--recurrent-cuda-graph") {
+            options.recurrent_cuda_graph = true;
         } else if (argument == "--warmup") {
             options.warmup = parse_i32(next("warmup"), "warmup", 0, INT32_MAX);
         } else if (argument == "--repeat") {
@@ -400,6 +406,7 @@ public:
                                            key_record, value_record, gate_record, out, stream);
     }
 
+
 private:
     [[nodiscard]] static float scale() { return 1.0F / std::sqrt(128.0F); }
 
@@ -476,12 +483,32 @@ Measurement measure_fold(const FoldResources& resources,
 }
 
 template <class Launch>
-Measurement measure_component(Launch&& launch, DeviceBuffer& flush, int warmup, int repeat) {
+Measurement measure_component(Launch&& launch, DeviceBuffer& flush, int warmup, int repeat,
+                              bool cuda_graph) {
     cudaStream_t stream = nullptr;
+    if (cuda_graph) { CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking)); }
     Measurement result;
-    result.warm           = bench::measure_launch(launch, stream, warmup, repeat);
-    result.cold           = bench::measure_cold_launch(launch, flush, stream, warmup, repeat);
+    result.cuda_graph = cuda_graph;
+    if (cuda_graph) {
+        bench::TimedGraph graph;
+        graph.capture(stream, [&](cudaStream_t capture_stream) {
+            for (int index = 0; index < kGraphTimingRepeats; ++index) { launch(capture_stream); }
+        });
+        const auto per_op = [](bench::ColdTiming timing) {
+            const double divisor = static_cast<double>(kGraphTimingRepeats);
+            timing.median_us /= divisor;
+            timing.min_us /= divisor;
+            timing.p95_us /= divisor;
+            return timing;
+        };
+        result.warm = per_op(bench::measure_graph(graph, stream, warmup, repeat));
+        result.cold = per_op(bench::measure_cold_graph(graph, flush, stream, warmup, repeat));
+    } else {
+        result.warm = bench::measure_launch(launch, stream, warmup, repeat);
+        result.cold = bench::measure_cold_launch(launch, flush, stream, warmup, repeat);
+    }
     result.host_median_us = measure_host_submission(launch, stream, warmup, repeat);
+    if (cuda_graph) { CUDA_CHECK(cudaStreamDestroy(stream)); }
     return result;
 }
 
@@ -489,8 +516,10 @@ void print_recurrent_result(const Profile& profile, std::int32_t width, std::int
                             ValidSelection valid, const char* form,
                             const Measurement& measurement) {
     std::printf("component=recurrent form=%-8s profile=%-8s T=%2d B=%d valid=%-5s "
-                "gpu_warm=%8.2f us gpu_cold=%8.2f us host_submit=%7.2f us\n",
-                form, profile.name, width, batch, valid_name(valid), measurement.warm.median_us,
+                "timing=%s gpu_warm=%8.2f us gpu_cold=%8.2f us host_submit=%7.2f us\n",
+                form, profile.name, width, batch, valid_name(valid),
+                measurement.cuda_graph ? "cuda-graph-16x" : "eager",
+                measurement.warm.median_us,
                 measurement.cold.median_us, measurement.host_median_us);
 }
 
@@ -499,7 +528,7 @@ void run_recurrent_point(const Profile& profile, std::int32_t width, std::int32_
     RecurrentResources resources(profile, width, batch, valid);
     const Measurement record =
         measure_component([&](cudaStream_t stream) { resources.launch_record(stream); }, flush,
-                          options.warmup, options.repeat);
+                          options.warmup, options.repeat, options.recurrent_cuda_graph);
     print_recurrent_result(profile, width, batch, valid, "record", record);
 }
 

@@ -16,8 +16,12 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -31,6 +35,26 @@ constexpr std::int32_t kGateUpRows = 34816;
 constexpr std::int32_t kOutputRows = 17408;
 constexpr std::int32_t kHidden     = 5120;
 constexpr std::size_t kFlushBytes  = 256ULL << 20;
+constexpr std::uint32_t kWeightSeed = 0x7f4a7c15U;
+
+void fill_q4_weight(bench::PackedQuantizedWeight& packed) {
+    const std::size_t groups = static_cast<std::size_t>(kGateUpRows) * (kHidden / 64);
+    if (packed.low_bytes != groups * 32 || packed.high_bytes != 0 ||
+        packed.scale_bytes != groups * sizeof(std::uint16_t)) {
+        throw std::logic_error("Q4 SwiGLU benchmark weight planes have unexpected geometry");
+    }
+    std::mt19937 rng(kWeightSeed);
+    std::vector<std::uint8_t> codes(static_cast<std::size_t>(packed.low_bytes));
+    std::vector<std::uint16_t> scales(groups);
+    for (std::uint8_t& byte : codes) { byte = static_cast<std::uint8_t>(rng() >> 24); }
+    for (std::uint16_t& bits : scales) {
+        const __half scale = __float2half_rn(0.02F + static_cast<float>(rng() % 97U) * 0.004F);
+        std::memcpy(&bits, &scale, sizeof(bits));
+    }
+    packed.storage.copy_from_host(codes.data(), codes.size(), 0);
+    packed.storage.copy_from_host(scales.data(), scales.size() * sizeof(std::uint16_t),
+                                  packed.scale_offset);
+}
 
 template <class Cfg>
 void launch_variant(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
@@ -99,7 +123,8 @@ int main(int argc, char** argv) {
         DeviceBuffer input       = bench::make_bf16(static_cast<std::size_t>(kHidden) * max_t);
         DeviceBuffer output(static_cast<std::size_t>(kOutputRows) * max_t * sizeof(std::uint16_t));
         bench::PackedQuantizedWeight packed = bench::make_row_split_weight(
-            QType::Q4G64_F16S, kGateUpRows, kHidden, kHidden, {0x31, 0xa5, 0x3c00});
+            QType::Q4_G64_FP16, kGateUpRows, kHidden, kHidden, {0x31, 0xa5, 0x3c00});
+        fill_q4_weight(packed);
 
         for (const std::int32_t t : tokens) {
             std::printf("== T=%d ==\n", t);

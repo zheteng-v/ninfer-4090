@@ -26,11 +26,15 @@ SPECULATIVE_MODES = {
     "mtp0": ("none", 0),
     "mtp2": ("mtp", 2),
     "mtp3": ("mtp", 3),
+    "mtp4": ("mtp", 4),
     "dflash7": ("dflash", 7),
+    "dflash2_6": ("dflash2", 6),
     "dflash2_7": ("dflash2", 7),
+    "dflash2_8": ("dflash2", 8),
 }
 DEFAULT_MODES = ("mtp0", "mtp3")
 SAMPLING_MODES = ("stochastic", "greedy")
+KV_DTYPES = ("int8", "fp8")
 
 SEEDS = (
     7632647173703958409,
@@ -78,9 +82,10 @@ SCENARIO_FIXTURES = {
 
 WARMUP_FIXTURE = "text_smoke_zh"
 RUN_ARTIFACT_TYPE = "ninfer_serve_corpus_result"
-RUN_SCHEMA_VERSION = 7
+RUN_SCHEMA_VERSION = 9
 SERVER_LOG_ARTIFACT_TYPE = "ninfer_serve_request_log"
 SERVER_LOG_SCHEMA_VERSION = 21
+SUPPORTED_SERVER_LOG_SCHEMA_VERSIONS = (20, SERVER_LOG_SCHEMA_VERSION)
 STARTUP_TIMEOUT_SECONDS = 1800.0
 REQUEST_TIMEOUT_SECONDS = 24.0 * 60.0 * 60.0
 LOG_EVENT_TIMEOUT_SECONDS = 10.0
@@ -94,6 +99,7 @@ class Fixture:
     max_new: int
     suite: str
     category: str | None = None
+    prompt_tokens: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -107,15 +113,20 @@ class RunSpec:
     sampling_mode: str
     fixture: Fixture
     seed: int
+    kv_dtype: str = "int8"
+    max_context: int = 262144
 
     @property
-    def key(self) -> tuple[str, str, str, str, int]:
+    def key(self) -> tuple[str, str, str, str, str, int, int, int]:
         return (
             self.target,
             self.speculative_mode,
             self.sampling_mode,
+            self.kv_dtype,
             self.fixture.name,
             self.seed,
+            self.draft_tokens,
+            self.max_context,
         )
 
 
@@ -291,14 +302,69 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="sampling profile for all requests (default: stochastic)",
     )
     parser.add_argument("--output", type=Path, required=True, help="campaign output directory")
+    parser.add_argument(
+        "--kv-dtype",
+        choices=KV_DTYPES,
+        default="int8",
+        help="KV representation for every point (default: int8)",
+    )
+    parser.add_argument(
+        "--max-context",
+        type=int,
+        default=262144,
+        help="Engine context capacity in tokens (default: 262144)",
+    )
+    seed_group = parser.add_mutually_exclusive_group()
+    seed_group.add_argument(
+        "--seed-count",
+        type=int,
+        default=len(SEEDS),
+        help="use the first N fixed corpus seeds for screening (default: all 5)",
+    )
+    seed_group.add_argument(
+        "--seed",
+        type=int,
+        help="use this exact nonnegative seed instead of a fixed-seed prefix",
+    )
+    parser.add_argument(
+        "--fixture",
+        action="append",
+        metavar="NAME",
+        help="restrict every selected mode to this named compatible fixture; repeatable",
+    )
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="write raw JSONL only; intended for a deliberately incomplete screen",
+    )
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
     parser.add_argument("--device", type=int, default=0, help="CUDA device index")
+    parser.add_argument(
+        "--no-cuda-graph",
+        action="store_true",
+        help="disable CUDA Graph execution for diagnostic comparisons",
+    )
+    parser.add_argument(
+        "--vision",
+        action="store_true",
+        help="enable Vision allocations for configuration-matched comparisons",
+    )
     return parser.parse_args(argv)
 
 
 def filename_label(label: str) -> str:
     """Keep arbitrary public aliases distinct inside one report filename component."""
     return quote(label, safe="")
+
+
+def selected_seeds(seed_count: int, seed: int | None = None) -> tuple[int, ...]:
+    if seed is not None:
+        if seed < 0:
+            raise CampaignError("--seed must be nonnegative")
+        return (seed,)
+    if seed_count < 1 or seed_count > len(SEEDS):
+        raise CampaignError(f"--seed-count must be in [1, {len(SEEDS)}]")
+    return SEEDS[:seed_count]
 
 
 def parse_artifacts(values: Sequence[str]) -> list[tuple[str, Path]]:
@@ -357,6 +423,7 @@ def load_fixtures() -> dict[str, Fixture]:
                 max_new=int(case["max_new"]),
                 suite=suite,
                 category=category,
+                prompt_tokens=int(case["prompt_tokens"]),
             )
         except (KeyError, OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             raise CampaignError(f"failed to load fixture {name!r} from the examples manifest: {exc}") from exc
@@ -377,13 +444,24 @@ def build_specs(
     fixtures: dict[str, Fixture],
     mode_names: Sequence[str],
     sampling_mode: str,
+    seeds: Sequence[int] = SEEDS,
+    fixture_names: Sequence[str] | None = None,
+    kv_dtype: str = "int8",
+    max_context: int = 262144,
 ) -> list[RunSpec]:
     specs: list[RunSpec] = []
     for target, artifact in artifacts:
         for mode_name in mode_names:
             backend, draft_tokens = SPECULATIVE_MODES[mode_name]
-            for fixture_name in block_fixture_names(backend):
-                for seed in SEEDS:
+            available = block_fixture_names(backend)
+            selected = tuple(fixture_names) if fixture_names else available
+            invalid = set(selected) - set(available)
+            if invalid:
+                raise CampaignError(
+                    f"fixture(s) {sorted(invalid)!r} are not valid for {mode_name}"
+                )
+            for fixture_name in selected:
+                for seed in seeds:
                     specs.append(
                         RunSpec(
                             target=target,
@@ -395,9 +473,21 @@ def build_specs(
                             sampling_mode=sampling_mode,
                             fixture=fixtures[fixture_name],
                             seed=seed,
+                            kv_dtype=kv_dtype,
+                            max_context=max_context,
                         )
                     )
     return specs
+
+
+def validate_fixture_context(specs: Sequence[RunSpec]) -> None:
+    for spec in specs:
+        minimum_context = spec.fixture.prompt_tokens + spec.fixture.max_new
+        if spec.max_context < minimum_context:
+            raise CampaignError(
+                f"--max-context {spec.max_context} cannot fit fixture {spec.fixture.name!r}; "
+                f"requires at least {minimum_context} tokens (prompt plus max_new)"
+            )
 
 
 def request_payload(model_id: str, fixture: Fixture, seed: int) -> dict[str, Any]:
@@ -458,12 +548,42 @@ def require_server_log_identity(event: dict[str, Any], event_name: str) -> None:
         event.get("schema_version"),
         event.get("event"),
     )
-    expected = (SERVER_LOG_ARTIFACT_TYPE, SERVER_LOG_SCHEMA_VERSION, event_name)
-    if identity != expected:
-        raise CampaignError(f"unexpected serving log identity {identity!r}; expected {expected!r}")
+    if (
+        identity[0] != SERVER_LOG_ARTIFACT_TYPE
+        or identity[1] not in SUPPORTED_SERVER_LOG_SCHEMA_VERSIONS
+        or identity[2] != event_name
+    ):
+        raise CampaignError(
+            f"unexpected serving log identity {identity!r}; expected "
+            f"({SERVER_LOG_ARTIFACT_TYPE!r}, one of {SUPPORTED_SERVER_LOG_SCHEMA_VERSIONS!r}, "
+            f"{event_name!r})"
+        )
 
 
-def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> tuple[str, str]:
+def server_start_prefill_signature(event: dict[str, Any]) -> str:
+    """Return the logged prefill identity, marking its absence in retained v2 logs."""
+
+    prefill_signature = event.get("artifact", {}).get("prefill_signature")
+    if isinstance(prefill_signature, str) and prefill_signature:
+        return prefill_signature
+    if event.get("schema_version") == 20:
+        # The retained v2 schema predates this v3 load identity. Keep that absence explicit.
+        return "unreported-v2-schema20"
+    raise CampaignError("server_start has no canonical artifact prefill_signature")
+
+
+def kv_cache_name(kv_dtype: str) -> str:
+    if kv_dtype == "int8":
+        return "int8-group64"
+    if kv_dtype == "fp8":
+        return "fp8-e4m3-row256"
+    raise CampaignError(f"unsupported KV dtype: {kv_dtype}")
+
+
+def validate_server_start(
+    event: dict[str, Any], spec: RunSpec, device: int, kv_dtype: str,
+    cuda_graph: bool = True, vision: bool = False,
+) -> tuple[str, str]:
     require_server_log_identity(event, "server_start")
     engine = event.get("engine", {})
     actual = {
@@ -473,6 +593,7 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
         "prefill_chunk": engine.get("prefill_chunk"),
         "kv_cache": engine.get("kv_cache"),
         "cuda_graph": engine.get("cuda_graph"),
+        "vision": engine.get("vision"),
         "prefix_reuse": engine.get("prefix_reuse"),
         "speculative_backend": engine.get("speculative_backend"),
         "speculative_draft_window": engine.get("speculative_draft_window"),
@@ -480,11 +601,12 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
     }
     expected = {
         "device": device,
-        "max_context": 262144,
-        "kv_capacity": 262144,
+        "max_context": spec.max_context,
+        "kv_capacity": spec.max_context,
         "prefill_chunk": 1024,
-        "kv_cache": "int8-group64",
-        "cuda_graph": True,
+        "kv_cache": kv_cache_name(kv_dtype),
+        "cuda_graph": cuda_graph,
+        "vision": vision,
         "prefix_reuse": False,
         "speculative_backend": spec.speculative_backend,
         "speculative_draft_window": spec.draft_tokens,
@@ -498,9 +620,7 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
         raise CampaignError("server_start sampling mode does not match the campaign")
     if Path(event.get("artifact", {}).get("path", "")).resolve() != spec.artifact.resolve():
         raise CampaignError("loaded artifact path does not match the campaign")
-    prefill_signature = event.get("artifact", {}).get("prefill_signature")
-    if not isinstance(prefill_signature, str) or not prefill_signature:
-        raise CampaignError("server_start has no canonical artifact prefill_signature")
+    prefill_signature = server_start_prefill_signature(event)
     if event.get("server", {}).get("public_model_id") != spec.model_id:
         raise CampaignError("server_start public model id does not match the campaign target")
     server_instance_id = event.get("server_instance_id")
@@ -661,6 +781,8 @@ def build_result_record(
         "speculative_backend": spec.speculative_backend,
         "draft_tokens": spec.draft_tokens,
         "sampling_mode": spec.sampling_mode,
+        "kv_dtype": spec.kv_dtype,
+        "max_context": spec.max_context,
         "request": payload,
         "response": response,
         "server_event": server_event,
@@ -668,14 +790,17 @@ def build_result_record(
     }
 
 
-def record_key(record: dict[str, Any]) -> tuple[str, str, str, str, int]:
+def record_key(record: dict[str, Any]) -> tuple[str, str, str, str, str, int, int, int]:
     try:
         return (
             str(record["target"]),
             str(record["speculative_mode"]),
             str(record["sampling_mode"]),
+            str(record["kv_dtype"]),
             str(record["fixture"]),
             int(record["seed"]),
+            int(record["draft_tokens"]),
+            int(record["max_context"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise CampaignError(f"invalid corpus result record key: {exc}") from exc
@@ -683,9 +808,9 @@ def record_key(record: dict[str, Any]) -> tuple[str, str, str, str, int]:
 
 def load_existing_records(
     path: Path,
-    expected_specs: dict[tuple[str, str, str, str, int], RunSpec],
-) -> dict[tuple[str, str, str, str, int], dict[str, Any]]:
-    records: dict[tuple[str, str, str, str, int], dict[str, Any]] = {}
+    expected_specs: dict[tuple[str, str, str, str, str, int, int, int], RunSpec],
+) -> dict[tuple[str, str, str, str, str, int, int, int], dict[str, Any]]:
+    records: dict[tuple[str, str, str, str, str, int, int, int], dict[str, Any]] = {}
     if not path.exists():
         return records
     try:
@@ -710,6 +835,10 @@ def load_existing_records(
                     raise CampaignError(
                         f"{path}:{line_number}: artifact path differs from the current command"
                     )
+                if int(record.get("max_context", -1)) != spec.max_context:
+                    raise CampaignError(
+                        f"{path}:{line_number}: max_context differs from the current command"
+                    )
                 records[key] = record
     except (OSError, json.JSONDecodeError) as exc:
         raise CampaignError(f"failed to read existing results from {path}: {exc}") from exc
@@ -728,6 +857,10 @@ def server_command(
     server_log: Path,
     port: int,
     device: int,
+    kv_dtype: str,
+    max_context: int = 262144,
+    cuda_graph: bool = True,
+    vision: bool = False,
 ) -> list[str]:
     command = [
         str(serve),
@@ -739,7 +872,9 @@ def server_command(
         "--model-id",
         spec.model_id,
         "--max-context",
-        "262144",
+        str(max_context),
+        "--kv-capacity",
+        str(max_context),
         "--prefill-chunk",
         "1024",
         "--log-stats-interval-ms",
@@ -749,9 +884,13 @@ def server_command(
         "--request-log-jsonl",
         str(server_log),
         "--kv-dtype",
-        "int8",
+        kv_dtype,
         "--no-prefix-reuse",
     ]
+    if not cuda_graph:
+        command.append("--no-cuda-graph")
+    if vision:
+        command.append("--vision")
     if spec.speculative_backend != "none":
         command.extend(
             [
@@ -793,8 +932,11 @@ def run_block(
     output_dir: Path,
     port: int,
     device: int,
+    kv_dtype: str,
+    cuda_graph: bool,
+    vision: bool,
     run_handle: Any,
-    records: dict[tuple[str, str, str, str, int], dict[str, Any]],
+    records: dict[tuple[str, str, str, str, str, int, int, int], dict[str, Any]],
     completed_before_block: int,
     total: int,
 ) -> None:
@@ -804,7 +946,10 @@ def run_block(
         / "server"
         / f"{filename_label(first.target)}_{first.speculative_mode}_{first.sampling_mode}.jsonl"
     )
-    command = server_command(serve, first, server_log, port, device)
+    command = server_command(
+        serve, first, server_log, port, device, kv_dtype,
+        max_context=first.max_context, cuda_graph=cuda_graph, vision=vision,
+    )
     print(
         f"start {first.target}/{first.speculative_mode}: "
         f"{len(block_specs)} missing request(s)",
@@ -812,7 +957,9 @@ def run_block(
     )
     with RunningServer(command, "127.0.0.1", port, server_log) as server:
         server_start = server.wait_until_ready()
-        server_instance_id, prefill_signature = validate_server_start(server_start, first, device)
+        server_instance_id, prefill_signature = validate_server_start(
+            server_start, first, device, kv_dtype, cuda_graph, vision
+        )
 
         connection = http.client.HTTPConnection(
             "127.0.0.1", port, timeout=REQUEST_TIMEOUT_SECONDS
@@ -867,23 +1014,48 @@ def sample_stats(records: Sequence[dict[str, Any]], name: str) -> tuple[int, flo
 
 
 def select_records(
-    records: dict[tuple[str, str, str, str, int], dict[str, Any]],
+    records: dict[tuple[str, str, str, str, str, int, int, int], dict[str, Any]],
     target: str,
     speculative_mode: str,
     sampling_mode: str,
     fixtures: Sequence[str],
+    seeds: Sequence[int],
 ) -> list[dict[str, Any]]:
-    return [
-        records[(target, speculative_mode, sampling_mode, fixture, seed)]
-        for fixture in fixtures
-        for seed in SEEDS
-    ]
+    kv_dtypes = {str(record["kv_dtype"]) for record in records.values()}
+    if len(kv_dtypes) != 1:
+        raise CampaignError("summary group does not have one KV dtype")
+    kv_dtype = next(iter(kv_dtypes))
+    max_contexts = {int(record["max_context"]) for record in records.values()}
+    if len(max_contexts) != 1:
+        raise CampaignError("summary group does not have one max_context")
+    max_context = next(iter(max_contexts))
+    selected: list[dict[str, Any]] = []
+    for fixture in fixtures:
+        for seed in seeds:
+            record = records.get(
+                (
+                    target,
+                    speculative_mode,
+                    sampling_mode,
+                    kv_dtype,
+                    fixture,
+                    seed,
+                    SPECULATIVE_MODES[speculative_mode][1],
+                    max_context,
+                )
+            )
+            if record is not None:
+                selected.append(record)
+    if not selected:
+        raise CampaignError("summary group has no matching benchmark records")
+    return selected
 
 
 SUMMARY_FIELDS = (
     "section",
     "target",
     "prefill_signature",
+    "max_context",
     "group",
     "fixture",
     "speculative_mode",
@@ -937,10 +1109,14 @@ def summary_row(
     prefill_signatures = {str(record.get("prefill_signature", "")) for record in records}
     if len(prefill_signatures) != 1 or not next(iter(prefill_signatures)):
         raise CampaignError("summary group does not have one canonical prefill_signature")
+    max_contexts = {int(record["max_context"]) for record in records}
+    if len(max_contexts) != 1:
+        raise CampaignError("summary group does not have one max_context")
     row: dict[str, Any] = {
         "section": section,
         "target": target,
         "prefill_signature": next(iter(prefill_signatures)),
+        "max_context": next(iter(max_contexts)),
         "group": group,
         "fixture": fixture,
         "speculative_mode": speculative_mode,
@@ -972,17 +1148,27 @@ def summary_row(
 
 
 def build_summary_rows(
-    records: dict[tuple[str, str, str, str, int], dict[str, Any]],
+    records: dict[tuple[str, str, str, str, str, int, int, int], dict[str, Any]],
     target_order: Sequence[str],
     mode_names: Sequence[str],
     sampling_mode: str,
+    seeds: Sequence[int] = SEEDS,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for target in target_order:
         for mode_name in mode_names:
             backend, _ = SPECULATIVE_MODES[mode_name]
+            present_fixtures = {
+                str(record["fixture"])
+                for record in records.values()
+                if record.get("target") == target
+                and record.get("speculative_mode") == mode_name
+                and record.get("sampling_mode") == sampling_mode
+            }
             if backend == "none":
                 for fixture in NIAH_FIXTURES:
+                    if fixture not in present_fixtures:
+                        continue
                     rows.append(
                         summary_row(
                             "context_profile",
@@ -992,13 +1178,15 @@ def build_summary_rows(
                             mode_name,
                             sampling_mode,
                             select_records(
-                                records, target, mode_name, sampling_mode, (fixture,)
+                                records, target, mode_name, sampling_mode, (fixture,), seeds
                             ),
                         )
                     )
                 continue
 
             for fixture in LONG_DECODE_FIXTURES:
+                if fixture not in present_fixtures:
+                    continue
                 rows.append(
                     summary_row(
                         "long_decode",
@@ -1008,13 +1196,16 @@ def build_summary_rows(
                         mode_name,
                         sampling_mode,
                         select_records(
-                            records, target, mode_name, sampling_mode, (fixture,)
+                            records, target, mode_name, sampling_mode, (fixture,), seeds
                         ),
                     )
                 )
 
             for category, fixture_names in SCENARIO_FIXTURES.items():
-                for fixture in fixture_names:
+                present_category_fixtures = tuple(
+                    fixture for fixture in fixture_names if fixture in present_fixtures
+                )
+                for fixture in present_category_fixtures:
                     rows.append(
                         summary_row(
                             "scenario_fixture",
@@ -1024,24 +1215,30 @@ def build_summary_rows(
                             mode_name,
                             sampling_mode,
                             select_records(
-                                records, target, mode_name, sampling_mode, (fixture,)
+                            records, target, mode_name, sampling_mode, (fixture,), seeds
                             ),
                         )
                     )
 
-                rows.append(
-                    summary_row(
-                        "scenario_category",
-                        target,
-                        category,
-                        "",
-                        mode_name,
-                        sampling_mode,
-                        select_records(
-                            records, target, mode_name, sampling_mode, fixture_names
-                        ),
+                if present_category_fixtures:
+                    rows.append(
+                        summary_row(
+                            "scenario_category",
+                            target,
+                            category,
+                            "",
+                            mode_name,
+                            sampling_mode,
+                            select_records(
+                                records,
+                                target,
+                                mode_name,
+                                sampling_mode,
+                                present_category_fixtures,
+                                seeds,
+                            ),
+                        )
                     )
-                )
     return rows
 
 
@@ -1081,10 +1278,16 @@ def mode_display_name(mode_name: str) -> str:
         return "MTP0"
     if mode_name == "mtp3":
         return "MTP3"
+    if mode_name == "mtp4":
+        return "MTP4"
     if mode_name == "dflash7":
         return "DFlash block=8 (k=7)"
+    if mode_name == "dflash2_6":
+        return "DFlash2 block=7 (k=6)"
     if mode_name == "dflash2_7":
         return "DFlash2 block=8 (k=7)"
+    if mode_name == "dflash2_8":
+        return "DFlash2 block=9 (k=8)"
     raise CampaignError(f"unsupported summary mode: {mode_name}")
 
 
@@ -1116,6 +1319,7 @@ def write_summaries(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
                 (
                     "Target",
                     "Weights",
+                    "Max context",
                     "Fixture",
                     "n",
                     "Prompt tokens",
@@ -1129,6 +1333,7 @@ def write_summaries(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
                     (
                         row["target"],
                         row["prefill_signature"],
+                        str(row["max_context"]),
                         row["fixture"],
                         str(row["samples"]),
                         format_mean_stddev(row, "prompt_tokens"),
@@ -1148,6 +1353,7 @@ def write_summaries(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
                 (
                     "Target",
                     "Weights",
+                    "Max context",
                     "Fixture",
                     "n",
                     "Completion tokens",
@@ -1161,6 +1367,7 @@ def write_summaries(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
                     (
                         row["target"],
                         row["prefill_signature"],
+                        str(row["max_context"]),
                         row["fixture"],
                         str(row["samples"]),
                         format_mean_stddev(row, "completion_tokens"),
@@ -1182,6 +1389,7 @@ def write_summaries(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
                 (
                     "Target",
                     "Weights",
+                    "Max context",
                     "Category",
                     "n",
                     "Decode tok/s",
@@ -1194,6 +1402,7 @@ def write_summaries(rows: Sequence[dict[str, Any]], output_dir: Path) -> None:
                     (
                         row["target"],
                         row["prefill_signature"],
+                        str(row["max_context"]),
                         row["group"],
                         str(row["samples"]),
                         format_mean_stddev(row, "decode_tok_s"),
@@ -1224,6 +1433,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise CampaignError("--port must be in [1, 65535]")
     if args.device < 0:
         raise CampaignError("--device must be nonnegative")
+    if args.max_context < 1:
+        raise CampaignError("--max-context must be positive")
+    seeds = selected_seeds(args.seed_count, args.seed)
 
     serve = args.serve.expanduser().resolve()
     if not serve.is_file():
@@ -1236,7 +1448,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if len(mode_names) != len(set(mode_names)):
         raise CampaignError("duplicate --mode value")
     fixtures = load_fixtures()
-    specs = build_specs(artifacts, fixtures, mode_names, args.sampling)
+    if args.fixture and len(args.fixture) != len(set(args.fixture)):
+        raise CampaignError("duplicate --fixture value")
+    specs = build_specs(
+        artifacts, fixtures, mode_names, args.sampling, seeds, args.fixture,
+        args.kv_dtype, args.max_context,
+    )
+    validate_fixture_context(specs)
     expected_specs = {spec.key: spec for spec in specs}
     total = len(expected_specs)
 
@@ -1266,6 +1484,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     output_dir,
                     args.port,
                     args.device,
+                    args.kv_dtype,
+                    not args.no_cuda_graph,
+                    args.vision,
                     run_handle,
                     records,
                     len(records),
@@ -1275,13 +1496,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     missing = set(expected_specs) - set(records)
     if missing:
         raise CampaignError(f"campaign ended with {len(missing)} missing formal request(s)")
-    target_order = [target for target, _ in artifacts]
-    summary_rows = build_summary_rows(records, target_order, mode_names, args.sampling)
-    write_summaries(summary_rows, output_dir)
-    print(
-        f"completed {total} formal requests; summary: {output_dir / 'summary.md'}",
-        flush=True,
-    )
+    if not args.no_summary:
+        target_order = [target for target, _ in artifacts]
+        summary_rows = build_summary_rows(records, target_order, mode_names, args.sampling, seeds)
+        write_summaries(summary_rows, output_dir)
+    message = f"completed {total} formal requests"
+    if not args.no_summary:
+        message += f"; summary: {output_dir / 'summary.md'}"
+    print(message, flush=True)
     return 0
 
 

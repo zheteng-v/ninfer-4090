@@ -184,6 +184,10 @@ elsewhere in this file.
 
 Build the benchmark and measure one exact production point:
 
+The benchmark defaults to CUDA ordinal 0; use `--device N` when the CUDA ordinal differs from the
+physical GPU index shown by `nvidia-smi`. The startup header prints `actual_gpu` and SM, so verify
+that identity before interpreting a result.
+
 ```bash
 cmake --build build --parallel --target ninfer_linear_bench
 ./build/bench/ninfer_linear_bench \
@@ -440,6 +444,22 @@ cmake --build build --parallel --target ninfer_gated_delta_net_bench
 ./build/bench/ninfer_gated_delta_net_bench \
   --chunked-only --value-heads 32 --tokens 1024 --breakdown \
   --warmup 20 --repeat 100
+```
+
+## GDN replay Record/Fold diagnostic benchmark
+
+`ninfer_gdn_replay_bench` measures the recurrent Record kernel and all-layer replay Fold. The
+recurrent path defaults to eager single-call event timing and reports host submission separately.
+For a graph-resident recurrent Record measurement, `--recurrent-cuda-graph` captures 16 identical,
+idempotent Record calls and reports event time divided by 16, amortizing the event/launch boundary;
+the cold result flushes 256 MiB before each graph replay. Fold remains eager. This is a focused
+diagnostic, not the full public Gated DeltaNet Op benchmark.
+
+```bash
+cmake --build build --target ninfer_gdn_replay_bench
+CUDA_VISIBLE_DEVICES=<RTX-4090-UUID> ./build/bench/ninfer_gdn_replay_bench \
+  --component recurrent --profile 27b --width 8 --batch 1 --valid dense \
+  --recurrent-cuda-graph --warmup 5 --repeat 30
 ```
 
 ## GDN input-projection Op benchmark

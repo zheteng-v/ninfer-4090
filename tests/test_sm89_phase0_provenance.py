@@ -16,6 +16,7 @@ from typing import Any, Callable, Sequence
 from tools.bench.phase0_provenance import (
     Candidate,
     build_manifest,
+    collect_environment,
     hash_file,
     write_manifest,
 )
@@ -78,13 +79,14 @@ def test_build_manifest_records_fields_and_sha256(tmp_path: Path) -> None:
         "screen",
         tmp_path / "out",
         0,
+        source_files=[],
         repo_root=tmp_path,
         runner=runner,
         now=lambda: FIXED_NOW,
     )
 
     assert manifest["artifact_type"] == "ninfer_phase0_provenance"
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == 2
     assert manifest["generated_at_utc"] == FIXED_NOW_ISO
     assert manifest["git"] == {"head": "abc123def", "dirty": False, "error": None}
     assert manifest["request"] == {
@@ -120,16 +122,72 @@ def test_build_manifest_records_fields_and_sha256(tmp_path: Path) -> None:
 def test_git_dirty_and_clean_flags(tmp_path: Path) -> None:
     clean = build_manifest(
         [], ["int8"], "screen", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler(status="")),
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler(status="")),
         now=lambda: FIXED_NOW,
     )
     dirty = build_manifest(
         [], ["int8"], "screen", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler(status=" M tools/bench/x.py\n")),
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler(status=" M tools/bench/x.py\n")),
         now=lambda: FIXED_NOW,
     )
     assert clean["git"]["dirty"] is False
     assert dirty["git"]["dirty"] is True
+
+
+def test_dirty_source_content_changes_fingerprint_while_git_state_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "tools" / "bench" / "run.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"first source revision")
+    runner = FakeRunner(_standard_handler(status=" M tools/bench/run.py\n"))
+
+    def build() -> dict[str, Any]:
+        return build_manifest(
+            [], ["int8"], "screen", tmp_path / "out", 0,
+            source_files=[source],
+            repo_root=tmp_path,
+            runner=runner,
+            now=lambda: FIXED_NOW,
+            collect_environment_info=False,
+        )
+
+    first = build()
+    source.write_bytes(b"second source revision")
+    second = build()
+
+    assert first["git"]["dirty"] is second["git"]["dirty"] is True
+    assert first["source_fingerprints"] == [
+        {
+            "path": "tools/bench/run.py",
+            "sha256": hashlib.sha256(b"first source revision").hexdigest(),
+            "bytes": len(b"first source revision"),
+            "error": None,
+        }
+    ]
+    assert second["source_fingerprints"][0]["sha256"] == hashlib.sha256(
+        b"second source revision"
+    ).hexdigest()
+    assert first["source_fingerprints"] != second["source_fingerprints"]
+
+
+def test_missing_source_is_recorded_as_failed_fingerprint(tmp_path: Path) -> None:
+    missing = tmp_path / "tools" / "bench" / "missing_runner.py"
+
+    manifest = build_manifest(
+        [], ["fp8"], "screen", tmp_path / "out", 0,
+        source_files=[missing],
+        repo_root=tmp_path,
+        runner=FakeRunner(_standard_handler()),
+        now=lambda: FIXED_NOW,
+        collect_environment_info=False,
+    )
+
+    fingerprint = manifest["source_fingerprints"][0]
+    assert fingerprint["path"] == "tools/bench/missing_runner.py"
+    assert fingerprint["sha256"] is None
+    assert fingerprint["bytes"] is None
+    assert "missing_runner.py" in fingerprint["error"]
 
 
 def test_git_failure_records_nulls(tmp_path: Path) -> None:
@@ -138,7 +196,7 @@ def test_git_failure_records_nulls(tmp_path: Path) -> None:
 
     manifest = build_manifest(
         [], ["int8"], "full", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(failing), now=lambda: FIXED_NOW,
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(failing), now=lambda: FIXED_NOW,
     )
     assert manifest["git"]["head"] is None
     assert manifest["git"]["dirty"] is None
@@ -148,7 +206,7 @@ def test_git_failure_records_nulls(tmp_path: Path) -> None:
 def test_nvidia_smi_missing_is_graceful(tmp_path: Path) -> None:
     manifest = build_manifest(
         [], ["fp8"], "screen", tmp_path, 1,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler(nvidia=False)),
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler(nvidia=False)),
         now=lambda: FIXED_NOW,
     )
     environment = manifest["environment"]
@@ -157,6 +215,37 @@ def test_nvidia_smi_missing_is_graceful(tmp_path: Path) -> None:
     assert environment["driver_version"] is None
     assert environment["gpus"] == []
     assert isinstance(environment["error"], str) and environment["error"]
+
+
+def test_nvidia_smi_invalid_utf8_is_replaced_and_command_failure_is_recorded() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: Sequence[str], **kwargs: Any) -> Any:
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        assert kwargs["errors"] == "replace"
+        calls.append(list(command))
+        if any(argument.startswith("--query-gpu") for argument in command):
+            raw = b"0, NVIDIA GeForce RTX 4090 \xad, 615.71.09, 49140\n"
+            return subprocess.CompletedProcess(command, 0, stdout=raw, stderr=b"")
+        return subprocess.CompletedProcess(
+            command, 1, stdout=b"invalid banner \xad", stderr=b"query failed \xff"
+        )
+
+    environment = collect_environment(runner)
+
+    assert environment["nvidia_smi_available"] is True
+    assert environment["gpus"] == [
+        {
+            "index": 0,
+            "name": "NVIDIA GeForce RTX 4090 �",
+            "driver_version": "615.71.09",
+            "memory_total_mib": 49140,
+        }
+    ]
+    assert environment["cuda_version"] is None
+    assert environment["error"] == "nvidia-smi version query unavailable"
+    assert len(calls) == 2
 
 
 def test_streaming_hash_matches_reference(tmp_path: Path) -> None:
@@ -174,7 +263,7 @@ def test_missing_candidate_file_records_null_digest(tmp_path: Path) -> None:
     manifest = build_manifest(
         [Candidate("v2", tmp_path / "absent-serve", tmp_path / "absent.ninfer")],
         ["int8"], "screen", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
         now=lambda: FIXED_NOW,
     )
     record = manifest["candidates"][0]
@@ -185,17 +274,18 @@ def test_missing_candidate_file_records_null_digest(tmp_path: Path) -> None:
 
 def test_manifest_omits_argv_and_api_key(tmp_path: Path) -> None:
     manifest = build_manifest(
-        [], ["int8"], "screen", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
+        [], ["int8"], "screen", Path("/safe/out"), 0,
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
         now=lambda: FIXED_NOW,
     )
     serialized = json.dumps(manifest)
     assert "api_key" not in serialized
     assert "argv" not in serialized
+    assert "source_fingerprints" in manifest
 
     without_environment = build_manifest(
-        [], ["int8"], "screen", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
+        [], ["int8"], "screen", Path("/safe/out"), 0,
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
         now=lambda: FIXED_NOW, collect_environment_info=False,
     )
     assert without_environment["environment"] is None
@@ -205,7 +295,7 @@ def test_write_manifest_roundtrips(tmp_path: Path) -> None:
     manifest = build_manifest(
         [Candidate("v3", tmp_path / "b", tmp_path / "a")],
         ["fp8"], "screen", tmp_path, 0,
-        repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
+        source_files=[], repo_root=tmp_path, runner=FakeRunner(_standard_handler()),
         now=lambda: FIXED_NOW,
     )
     path = tmp_path / "nested" / "manifest.json"

@@ -38,7 +38,7 @@ __all__ = [
 ]
 
 MANIFEST_ARTIFACT_TYPE = "ninfer_phase0_provenance"
-MANIFEST_SCHEMA_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_HASH_CHUNK_BYTES = 1 << 20
 
@@ -79,7 +79,9 @@ def _invoke(runner: Runner, command: Sequence[str]) -> Any | None:
     """Run one external command, returning None when it is unavailable instead of raising."""
 
     try:
-        return runner(list(command), capture_output=True, text=True, check=False)
+        return runner(
+            list(command), capture_output=True, text=True, errors="replace", check=False
+        )
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -90,7 +92,11 @@ def _stdout(completed: Any | None) -> str | None:
     if getattr(completed, "returncode", 1) != 0:
         return None
     output = getattr(completed, "stdout", None)
-    return output if isinstance(output, str) else None
+    if isinstance(output, str):
+        return output
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return None
 
 
 def git_metadata(repo_root: Path, runner: Runner) -> dict[str, Any]:
@@ -129,12 +135,13 @@ def collect_environment(runner: Runner) -> dict[str, Any]:
             "--format=csv,noheader,nounits",
         ],
     )
-    if query is None or getattr(query, "returncode", 1) != 0:
+    query_stdout = _stdout(query)
+    if query_stdout is None:
         environment["error"] = "nvidia-smi unavailable"
         return environment
 
     environment["nvidia_smi_available"] = True
-    for line in str(getattr(query, "stdout", "")).splitlines():
+    for line in query_stdout.splitlines():
         fields = [field.strip() for field in line.split(",")]
         if len(fields) < 4:
             continue
@@ -155,10 +162,12 @@ def collect_environment(runner: Runner) -> dict[str, Any]:
         environment["driver_version"] = environment["gpus"][0]["driver_version"]
 
     banner = _stdout(_invoke(runner, ["nvidia-smi"]))
-    if banner is not None:
-        match = _CUDA_VERSION_RE.search(banner)
-        if match:
-            environment["cuda_version"] = match.group(1)
+    if banner is None:
+        environment["error"] = "nvidia-smi version query unavailable"
+        return environment
+    match = _CUDA_VERSION_RE.search(banner)
+    if match:
+        environment["cuda_version"] = match.group(1)
     return environment
 
 
@@ -189,6 +198,44 @@ def _candidate_record(candidate: Candidate, hasher: HashFn) -> dict[str, Any]:
     return record
 
 
+def _stable_source_path(path: Path, repo_root: Path) -> tuple[Path, str]:
+    """Resolve a source path and give in-repository files a cwd-independent identity."""
+
+    source = Path(path).expanduser()
+    if not source.is_absolute():
+        source = repo_root / source
+    resolved = source.resolve()
+    try:
+        stable = resolved.relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        stable = str(resolved)
+    return resolved, stable
+
+
+def _source_fingerprints(
+    source_files: Iterable[Path], repo_root: Path, hasher: HashFn
+) -> list[dict[str, Any]]:
+    """Hash explicit source files; retain missing paths as failed identities, never omit them."""
+
+    sources: list[tuple[Path, str]] = [
+        _stable_source_path(path, repo_root) for path in source_files
+    ]
+    fingerprints: list[dict[str, Any]] = []
+    for resolved, stable_path in sorted(sources, key=lambda item: item[1]):
+        fingerprint: dict[str, Any] = {
+            "path": stable_path,
+            "sha256": None,
+            "bytes": None,
+            "error": None,
+        }
+        try:
+            fingerprint["sha256"], fingerprint["bytes"] = hasher(resolved)
+        except (OSError, ValueError) as exc:
+            fingerprint["error"] = str(exc)
+        fingerprints.append(fingerprint)
+    return fingerprints
+
+
 def build_manifest(
     candidates: Iterable[Candidate],
     kv_dtypes: Sequence[str],
@@ -196,6 +243,7 @@ def build_manifest(
     output_dir: Path,
     device: int,
     *,
+    source_files: Sequence[Path],
     repo_root: Path | None = None,
     runner: Runner | None = None,
     now: Callable[[], datetime.datetime] | None = None,
@@ -214,6 +262,9 @@ def build_manifest(
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generated_at_utc": _utc_isoformat(resolved_now()),
         "git": git_metadata(resolved_root, resolved_runner),
+        "source_fingerprints": _source_fingerprints(
+            source_files, resolved_root, resolved_hasher
+        ),
         "request": {
             "kv_dtypes": [str(value) for value in kv_dtypes],
             "phase": str(phase),
