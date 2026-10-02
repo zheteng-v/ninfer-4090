@@ -35,5 +35,8 @@ void launch_q4_mma_r64_c120_partial(const Tensor& x, const Weight& w, Tensor& ou
                                     cudaStream_t stream);
 void launch_q4_mma_r64_c120(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream);
 void launch_q4_mma_r64_c128(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream);
+// GDN QK Q4 small-T linear: N=4096, K=5120, T=8 (Q4DraftSmallTSchedule16 path).
+void launch_q4_small_t_n4096_k5120_t8(const Tensor& x, const Weight& w, Tensor& out,
+                                      cudaStream_t stream);
 
 } // namespace ninfer::ops::detail

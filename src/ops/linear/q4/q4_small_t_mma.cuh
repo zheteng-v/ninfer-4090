@@ -28,6 +28,25 @@ struct Q4DraftHeadGeometry {
     static constexpr int kGroupsPerRow = kInputRows / 64;
 };
 
+// Generic plain-Linear geometry for the Q4 small-T MMA: OutputRows x InputRows.
+template <int OutputRows, int InputRows>
+struct Q4LinearSmallTGeometry {
+    static constexpr int kOutputRows   = OutputRows;
+    static constexpr int kInputRows    = InputRows;
+    static constexpr int kGroupsPerRow = InputRows / 64;
+};
+
+// Default output leading stride for the store epilogue. Geometries used only with a custom
+// Epilogue (which never takes the store-epilogue path) need not define kOutputRows.
+template <class Geometry, class = void>
+struct Q4SmallTDefaultOutputStride {
+    static constexpr int value = 0;
+};
+template <class Geometry>
+struct Q4SmallTDefaultOutputStride<Geometry, std::void_t<decltype(Geometry::kOutputRows)>> {
+    static constexpr int value = Geometry::kOutputRows;
+};
+
 struct Q4DraftSmallTSchedule {
     static constexpr int kKWarps            = 8;
     static constexpr int kMinBlocksPerSm    = 6;
@@ -36,6 +55,14 @@ struct Q4DraftSmallTSchedule {
     static constexpr int kTileKPerWarp      = 64;
     static constexpr int kGroupK            = kKWarps * kTileKPerWarp;
     static constexpr int kRowsPerCta        = 16;
+    static constexpr int kRowsPerLoaderWarp = kRowsPerCta / kKWarps;
+};
+
+struct Q4DraftSmallTSchedule16 : Q4DraftSmallTSchedule {
+    static constexpr int kKWarps            = 16;
+    static constexpr int kMinBlocksPerSm    = 2;
+    static constexpr int kThreads           = kKWarps * 32;
+    static constexpr int kGroupK            = kKWarps * kTileKPerWarp;
     static constexpr int kRowsPerLoaderWarp = kRowsPerCta / kKWarps;
 };
 
@@ -57,14 +84,15 @@ __device__ __forceinline__ unsigned q4_small_t_bf16_pair(std::uint8_t packed) {
 }
 
 template <class Geometry, int TileCols, int ActiveCols, class Epilogue = Q4SmallTMmaStoreEpilogue,
-          class RowPolicy = Q4SmallTMmaIdentityRows, bool MaskedColumns = false>
-__launch_bounds__(256, 6) __global__
+          class RowPolicy = Q4SmallTMmaIdentityRows, bool MaskedColumns = false,
+          class Schedule = Q4DraftSmallTSchedule>
+__launch_bounds__(Schedule::kThreads, Schedule::kMinBlocksPerSm) __global__
     void q4_small_t_mma_kernel(const __nv_bfloat16* __restrict__ x,
                                const std::uint8_t* __restrict__ codes,
                                const std::uint8_t* __restrict__ scales,
                                __nv_bfloat16* __restrict__ out, Epilogue epilogue = {},
-                               RowPolicy row_policy = {}, int columns = ActiveCols) {
-    using Schedule              = Q4DraftSmallTSchedule;
+                               RowPolicy row_policy = {}, int columns = ActiveCols,
+                               int output_stride = Q4SmallTDefaultOutputStride<Geometry>::value) {
     constexpr int kHidden       = Geometry::kInputRows;
     constexpr int kTileK        = Schedule::kTileKPerWarp;
     constexpr int kWarps        = Schedule::kKWarps;
@@ -136,10 +164,14 @@ __launch_bounds__(256, 6) __global__
         }
         for (int row = tid; row < kRowsPerCta; row += kWarps * 32) {
             const int weight_row = row_policy.weight_row(row0, row);
-            cp_async<16>(&scale_shared[row][0],
-                         scales + (static_cast<std::int64_t>(weight_row) * Geometry::kGroupsPerRow +
-                                   group_k0 / 64) *
-                                      2);
+            const auto* scale_source =
+                scales + (static_cast<std::int64_t>(weight_row) * Geometry::kGroupsPerRow +
+                          group_k0 / 64) *
+                             2;
+            cp_async<16>(&scale_shared[row][0], scale_source);
+            if constexpr (kWarps > 8) {
+                cp_async<16>(&scale_shared[row][8], scale_source + 16);
+            }
         }
     };
 
@@ -242,16 +274,16 @@ __launch_bounds__(256, 6) __global__
             const int col0 = nt * 8 + 2 * lid;
             if constexpr (std::is_same_v<Epilogue, Q4SmallTMmaStoreEpilogue>) {
                 if (col0 < live_columns) {
-                    out[static_cast<std::int64_t>(col0) * Geometry::kOutputRows + row0 + gid] =
+                    out[static_cast<std::int64_t>(col0) * output_stride + row0 + gid] =
                         __float2bfloat16_rn(sum.x);
-                    out[static_cast<std::int64_t>(col0) * Geometry::kOutputRows + row0 + gid + 8] =
+                    out[static_cast<std::int64_t>(col0) * output_stride + row0 + gid + 8] =
                         __float2bfloat16_rn(sum.z);
                 }
                 if (col0 + 1 < live_columns) {
-                    out[static_cast<std::int64_t>(col0 + 1) * Geometry::kOutputRows + row0 + gid] =
+                    out[static_cast<std::int64_t>(col0 + 1) * output_stride + row0 + gid] =
                         __float2bfloat16_rn(sum.y);
-                    out[static_cast<std::int64_t>(col0 + 1) * Geometry::kOutputRows + row0 + gid +
-                        8] = __float2bfloat16_rn(sum.w);
+                    out[static_cast<std::int64_t>(col0 + 1) * output_stride + row0 + gid + 8] =
+                        __float2bfloat16_rn(sum.w);
                 }
             } else {
                 epilogue.template store<ActiveCols>(row0 + gid, col0, sum);

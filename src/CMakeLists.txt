@@ -226,6 +226,7 @@ add_library(ninfer_ops STATIC
   ops/linear/q4/q4_rowsplit_gemv.cu
   ops/linear/q4/q4_dispatch.cpp
   ops/linear/q5/q5_dispatch.cpp
+  ops/linear/q5/q5_ksplit_mma.cu
   ops/linear/q5/q5_rowsplit_gemm_mma.cu
   ops/linear/q5/q5_rowsplit_gemm_simt.cu
   ops/linear/q5/q5_rowsplit_gemv.cu
@@ -244,6 +245,7 @@ add_library(ninfer_ops STATIC
   ops/linear_add/q5/q5_linear_add_gemm_mma.cu
   ops/linear_add/q5/q5_linear_add_gemm_simt.cu
   ops/linear_add/q5/q5_linear_add_gemv.cu
+  ops/linear_add/q5/q5_linear_add_ksplit_mma.cu
   ops/linear_add/q5/q5_linear_add_plan.cpp
   ops/linear_add/q8/q8_linear_add_gemm_mma.cu
   ops/linear_add/q8/q8_linear_add_gemm_simt.cu

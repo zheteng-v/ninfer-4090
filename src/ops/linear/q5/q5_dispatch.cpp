@@ -33,7 +33,9 @@ Q5Launch select_q5_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
     case 6144:
         if (n == 5120) {
             if (t == 1) { return launch_q5_simt_r8_c4; }
-            if (t <= 6) { return launch_q5_simt_split2_exact; }
+            if (t <= 4) { return launch_q5_simt_split2_exact; }
+            if (t <= 8) { return launch_q5_ksplit_n5120_k6144_c8; }
+            if (t <= 16) { return launch_q5_ksplit_n5120_k6144_c16; }
             if (t <= 24) { return launch_q5_simt_r8_c8; }
             return launch_q5_mma_r64_c128;
         }
@@ -41,7 +43,9 @@ Q5Launch select_q5_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
     case 17408:
         if (n == 5120) {
             if (t == 1) { return launch_q5_simt_r8_c4; }
-            if (t <= 6) { return launch_q5_simt_split2_exact; }
+            if (t <= 4) { return launch_q5_simt_split2_exact; }
+            if (t <= 8) { return launch_q5_ksplit_n5120_k17408_c8; }
+            if (t <= 16) { return launch_q5_ksplit_n5120_k17408_c16; }
             if (t <= 24) { return launch_q5_simt_r8_c8; }
             return launch_q5_mma_r64_c128;
         }

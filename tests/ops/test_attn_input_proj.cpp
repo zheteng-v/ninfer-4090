@@ -604,8 +604,10 @@ int run_weight_inputs() {
 int main(int argc, char** argv) {
     const bool dflash2_only = argc == 2 && std::string(argv[1]) == "--dflash2-only";
     const bool inputs_only  = argc == 2 && std::string(argv[1]) == "--weight-inputs-only";
-    if (argc != 1 && !dflash2_only && !inputs_only) {
-        std::cerr << "usage: ninfer_attn_input_proj_test [--dflash2-only|--weight-inputs-only]\n";
+    const bool q4_q5_only   = argc == 2 && std::string(argv[1]) == "--q4-q5-only";
+    if (argc != 1 && !dflash2_only && !inputs_only && !q4_q5_only) {
+        std::cerr << "usage: ninfer_attn_input_proj_test "
+                     "[--dflash2-only|--weight-inputs-only|--q4-q5-only]\n";
         return 2;
     }
     if (cuda_unavailable()) {
@@ -615,6 +617,7 @@ int main(int argc, char** argv) {
 
     int failures = 0;
     if (inputs_only) { return run_weight_inputs() == 0 ? 0 : 1; }
+    if (q4_q5_only) { return run_q4_q5() == 0 ? 0 : 1; }
     if (!dflash2_only) {
         failures += run_q4_q5();
         failures += run_bf16_target();

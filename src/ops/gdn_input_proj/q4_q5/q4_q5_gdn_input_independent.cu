@@ -4,8 +4,10 @@
 #include "core/device.h"
 #include "core/pdl.cuh"
 #include "ops/common/math.h"
+#include "ops/linear/q4/q4_launch.h"
 #include "ops/linear/q4/q4_rowsplit_gemm_simt.cuh"
 #include "ops/linear/q4/q4_rowsplit_gemv.cuh"
+#include "ops/linear/q5/q5_launch.h"
 #include "ops/linear/q5/q5_rowsplit_gemm_simt.cuh"
 #include "ops/linear/q5/q5_rowsplit_gemv.cuh"
 
@@ -71,6 +73,10 @@ void launch_q4(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t 
         launch_q4_simt_route<Q4GdnSimtR8C4Schedule>(x, weight, out, stream);
         return;
     }
+    if (x.ne[1] == 8) {
+        launch_q4_small_t_n4096_k5120_t8(x, weight, out, stream);
+        return;
+    }
     if (x.ne[1] <= 15) {
         launch_q4_simt_route<Q4GdnSimtR8C8Schedule>(x, weight, out, stream);
         return;
@@ -127,8 +133,11 @@ void launch_q5_split4_exact(const Tensor& x, const Weight& weight, Tensor& value
     case 6:
         launch_q5_split4<6>(x, weight, value, z, stream);
         return;
+    case 8:
+        launch_q5_split4<8>(x, weight, value, z, stream);
+        return;
     default:
-        throw std::invalid_argument("GDN Q5 split4 requires T in [2,6]");
+        throw std::invalid_argument("GDN Q5 split4 requires T in [2,6] or T=8");
     }
 }
 
@@ -160,6 +169,10 @@ void launch_q5(const Tensor& x, const Weight& weight, Tensor& value, Tensor& z,
     }
     if (x.ne[1] <= 6) {
         launch_q5_split4_exact(x, weight, value, z, stream);
+        return;
+    }
+    if (x.ne[1] == 8) {
+        launch_q5_ksplit_gdn_value_z_t8(x, weight, value, z, stream);
         return;
     }
     if (x.ne[1] <= 15) {

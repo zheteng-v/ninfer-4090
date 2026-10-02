@@ -37,18 +37,22 @@ constexpr std::array<SupportSpec, 2> kSupports{{
     {5120, 17408, 17408},
 }};
 
-constexpr std::array<RouteSpec, 6> kK6144Routes{{
+constexpr std::array<RouteSpec, 8> kK6144Routes{{
     {{1, 1}, Q5LinearAddScheduleId::GemvResidual},
-    {{2, 13}, Q5LinearAddScheduleId::Split2ExactResidual},
+    {{2, 7}, Q5LinearAddScheduleId::Split2ExactResidual},
+    {{8, 8}, Q5LinearAddScheduleId::KSplitMmaResidual},
+    {{9, 13}, Q5LinearAddScheduleId::Split2ExactResidual},
     {{14, 32}, Q5LinearAddScheduleId::MmaResidualR64C16},
     {{33, 48}, Q5LinearAddScheduleId::MmaResidualR64C24},
     {{49, 192}, Q5LinearAddScheduleId::MmaResidualR64C32S4},
     {{193, kAnyCols}, Q5LinearAddScheduleId::MmaResidualR64C128},
 }};
 
-constexpr std::array<RouteSpec, 6> kK17408Routes{{
+constexpr std::array<RouteSpec, 8> kK17408Routes{{
     {{1, 1}, Q5LinearAddScheduleId::GemvResidual},
-    {{2, 16}, Q5LinearAddScheduleId::Split2ExactResidual},
+    {{2, 4}, Q5LinearAddScheduleId::Split2ExactResidual},
+    {{5, 8}, Q5LinearAddScheduleId::KSplitMmaResidual},
+    {{9, 16}, Q5LinearAddScheduleId::Split2ExactResidual},
     {{17, 32}, Q5LinearAddScheduleId::MmaResidualR64C16},
     {{33, 48}, Q5LinearAddScheduleId::MmaResidualR64C24},
     {{49, 192}, Q5LinearAddScheduleId::MmaResidualR64C32S3},
@@ -85,6 +89,8 @@ const char* q5_linear_add_schedule_name(Q5LinearAddScheduleId schedule) noexcept
     switch (schedule) {
     case Q5LinearAddScheduleId::GemvResidual:
         return "linear_add.q5.gemv.residual";
+    case Q5LinearAddScheduleId::KSplitMmaResidual:
+        return "linear_add.q5.ksplit_mma.residual";
     case Q5LinearAddScheduleId::Split2ExactResidual:
         return "linear_add.q5.simt.split2.exact.residual";
     case Q5LinearAddScheduleId::MmaResidualR64C16:
@@ -125,10 +131,12 @@ std::size_t q5_linear_add_capacity_workspace_bytes(std::int32_t rows, std::int32
     if (min_cols <= 0 || max_cols < min_cols) {
         throw std::invalid_argument("q5 linear_add: invalid column interval");
     }
-    (void)q5_linear_add_resolve_plan({rows, k, padded_k, min_cols});
-    (void)q5_linear_add_resolve_plan({rows, k, padded_k, max_cols});
-
-    return 0;
+    std::size_t capacity = std::max(q5_linear_add_resolve_plan({rows, k, padded_k, min_cols}).workspace_bytes,
+                                    q5_linear_add_resolve_plan({rows, k, padded_k, max_cols}).workspace_bytes);
+    if (k == 17408 && min_cols <= 8 && max_cols >= 8) {
+        capacity = std::max(capacity, q5_linear_add_resolve_plan({rows, k, padded_k, 8}).workspace_bytes);
+    }
+    return capacity;
 }
 
 void q5_linear_add_execute_plan(const Q5LinearAddPlan& plan, const Tensor& x, const Weight& w,
@@ -143,6 +151,9 @@ void q5_linear_add_execute_plan(const Q5LinearAddPlan& plan, const Tensor& x, co
     switch (plan.schedule) {
     case Q5LinearAddScheduleId::GemvResidual:
         q5_linear_add_gemv_residual_launch(x, w, residual_out, stream);
+        return;
+    case Q5LinearAddScheduleId::KSplitMmaResidual:
+        q5_linear_add_ksplit_mma_residual_launch(x, w, residual_out, stream);
         return;
     case Q5LinearAddScheduleId::Split2ExactResidual:
         q5_linear_add_split2_exact_launch(x, w, residual_out, stream);

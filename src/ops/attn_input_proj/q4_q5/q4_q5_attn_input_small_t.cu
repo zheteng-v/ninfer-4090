@@ -5,6 +5,7 @@
 #include "ops/common/math.h"
 #include "ops/linear/q4/q4_rowsplit_gemm_simt.cuh"
 #include "ops/linear/q4/q4_rowsplit_gemv.cuh"
+#include "ops/linear/q5/q5_launch.h"
 #include "ops/linear/q5/q5_rowsplit_gemm_simt.cuh"
 #include "ops/linear/q5/q5_rowsplit_gemv.cuh"
 
@@ -170,6 +171,10 @@ void launch_q5(const Tensor& x, const Weight& weight, Tensor& gate, Tensor& valu
     }
     if (x.ne[1] <= 6) {
         launch_q5_split4_exact(x, weight, gate, value, stream);
+        return;
+    }
+    if (x.ne[1] == 8) {
+        launch_q5_ksplit_attn_gate_value_t8(x, weight, gate, value, stream);
         return;
     }
     if (x.ne[1] <= 12) {

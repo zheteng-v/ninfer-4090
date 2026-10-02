@@ -84,6 +84,19 @@ void launch_small_t_active(const Tensor& x, const Weight& w, Tensor& out, cudaSt
     CUDA_CHECK(cudaGetLastError());
 }
 
+void launch_small_t_kw16(const Tensor& x, const Weight& w, Tensor& out, cudaStream_t stream) {
+    constexpr int kActiveCols = 8;
+    constexpr int kBlocks = kIntermediate / Q4SwiGluSmallTRows::kOutputRowsPerCta;
+    const Q4SwiGluSmallTEpilogue epilogue{static_cast<__nv_bfloat16*>(out.data), x.ne[1]};
+    q4_small_t_mma_kernel<Q4SwiGluSmallTGeometry, 8, kActiveCols, Q4SwiGluSmallTEpilogue,
+                          Q4SwiGluSmallTRows, true, Q4DraftSmallTSchedule16>
+        <<<kBlocks, Q4DraftSmallTSchedule16::kThreads, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(x.data), static_cast<const std::uint8_t*>(w.qdata),
+            static_cast<const std::uint8_t*>(w.scales), static_cast<__nv_bfloat16*>(out.data),
+            epilogue, Q4SwiGluSmallTRows{}, x.ne[1]);
+    CUDA_CHECK(cudaGetLastError());
+}
+
 template <std::size_t... Offsets>
 constexpr auto make_small_t_launchers(std::index_sequence<Offsets...>) {
     return std::array<SmallTLauncher, sizeof...(Offsets)>{
@@ -221,7 +234,11 @@ void q4_linear_swiglu_small_t_tiled_launch(const Tensor& x, const Weight& w, Ten
     if (x.ne[1] < 2 || x.ne[1] > 32) {
         throw std::invalid_argument("Q4 LinearSwiGLU exact small-T requires T=2..32");
     }
-    kSmallTLaunchers[static_cast<std::size_t>((x.ne[1] - 1) / 8)](x, w, out, stream);
+    if (x.ne[1] == 8) {
+        launch_small_t_kw16(x, w, out, stream);
+    } else {
+        kSmallTLaunchers[static_cast<std::size_t>((x.ne[1] - 1) / 8)](x, w, out, stream);
+    }
 }
 
 } // namespace ninfer::ops::detail
