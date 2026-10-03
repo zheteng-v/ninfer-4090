@@ -84,6 +84,45 @@ python3 tools/bench/run_serve_concurrency.py \
 The experiment writes immutable command provenance, per-request JSONL, TTFT,
 queue delay, decode batch size, aggregate decode tok/s, and speculative acceptance.
 
+## Initial on-device evidence (2026-10-04)
+
+These are deliberately small validation runs on the production RTX 4090 after a
+restart into the fair-prefill build. They establish scheduler behavior and route
+direction; they are not a replacement for the full fixed-corpus campaign above.
+All runs used V3, INT8 KV, 196608 context per route, greedy decoding, no prompt
+reuse in the test payloads, and a 1024-token prefill chunk.
+
+### Long/short fairness check
+
+The long request had 130048 prompt tokens and was submitted first. The short
+request had 30 prompt tokens and arrived 250 ms later.
+
+| Backend | Long complete prefill | Short queue wait | Short TTFT | Result |
+| --- | ---: | ---: | ---: | --- |
+| MTP3 | 80.57 s | 331.5 ms | 1.36 s | pass |
+| DFlash2 K=7 | 81.92 s | 338.8 ms | 1.84 s | pass |
+
+Before the scheduler change, the equivalent short request waited about 62 s
+behind a 133K prefill. Both rows therefore demonstrate that the second request
+now starts while the long request remains in prefill.
+
+### Simplified matched decode check
+
+One request produced 384 tokens; the two-request run submitted two copies of the
+same 54-token prompt concurrently, each capped at 384 tokens. `Aggregate` is
+total completed tokens divided by wall-clock makespan, so it includes the small
+prompt/TTFT cost and is intentionally a conservative end-to-end measure.
+
+| Backend | C=1 aggregate | C=2 aggregate | C=2 gain | C=2 per-request decode |
+| --- | ---: | ---: | ---: | --- |
+| MTP3 | 96.6 tok/s | 177.8 tok/s | +84.2% | 103.9 / 92.5 tok/s |
+| DFlash2 K=7 | 105.5 tok/s | 105.5 tok/s | -0.1% | 55.8 / 53.8 tok/s |
+
+MTP3 is therefore the deployed dual-request default. DFlash2 was slightly faster
+in this single-request sample, but did not produce a two-request aggregation gain.
+The next corpus campaign must confirm whether that pattern holds across coding,
+long-context and tool-use requests before any route policy is made permanent.
+
 ## Acceptance gates
 
 1. The long/short test shows the short request prefill begins before the long
@@ -105,9 +144,11 @@ different loaded components, KV/state layouts, workspace plans and CUDA-graph
 profiles. A command-line router or two independent processes cannot share GPU
 weights and would not meet the memory objective.
 
-Do not implement process-level dual routing before the measurement protocol proves
-that both modes win distinct workload classes. If the data supports it, the next
-design must be a single `ProgramImpl` that:
+Do not implement process-level dual routing before the fixed-corpus protocol proves
+that both modes win distinct workload classes. The initial smoke data is sufficient
+to keep MTP3 as the dual-route default, but is not sufficient to justify the large
+memory and correctness cost of a dual-backend runtime. If the campaign supports it,
+the next design must be a single `ProgramImpl` that:
 
 1. loads shared base weights once plus both optional speculative components;
 2. owns MTP and DFlash runtime allocations separately and accounts for their exact
