@@ -4,6 +4,7 @@
 #include "runtime/contract/execution.h"
 #include "runtime/engine/admission_policy.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -233,7 +234,10 @@ public:
     [[nodiscard]] bool should_attempt_admission(bool have_pending, bool admission_check_pending,
                                                 bool have_decode, bool previous_unit_was_decode,
                                                 bool context_transaction) const noexcept {
-        return have_pending && admission_check_pending && !context_transaction && !prefill_lane_ &&
+        // A staged prefill must not prevent another free lane from being admitted.  Each request
+        // advances one bounded prefill chunk at a time and staged lanes are round-robin scheduled
+        // below, so withholding admission here turns a long prompt into head-of-line blocking.
+        return have_pending && admission_check_pending && !context_transaction &&
                (!have_decode || previous_unit_was_decode);
     }
 
@@ -247,7 +251,15 @@ public:
     }
 
     [[nodiscard]] std::optional<std::uint32_t> prefill_lane() const noexcept {
-        return prefill_lane_;
+        if (prefill_lanes_.empty()) { return std::nullopt; }
+        return prefill_lanes_.front();
+    }
+
+    [[nodiscard]] bool has_prefill_lane(std::uint32_t lane) const noexcept {
+        for (const std::uint32_t candidate : prefill_lanes_) {
+            if (candidate == lane) { return true; }
+        }
+        return false;
     }
 
     [[nodiscard]] std::optional<std::uint64_t> protection_epoch() const noexcept {
@@ -255,15 +267,29 @@ public:
     }
 
     void set_prefill_lane(std::uint32_t lane) {
-        if (prefill_lane_) { throw std::logic_error("multiple requests own staged prefill"); }
-        prefill_lane_ = lane;
+        if (has_prefill_lane(lane)) {
+            throw std::logic_error("request already owns staged prefill");
+        }
+        prefill_lanes_.push_back(lane);
+    }
+
+    // `advance_prefill()` processes at most one configured prompt chunk.  Moving an unfinished
+    // request to the tail after that unit gives every admitted request a bounded opportunity to
+    // make prompt progress before a very long prompt can consume another chunk.
+    void rotate_prefill_lane(std::uint32_t lane) {
+        if (prefill_lanes_.empty() || prefill_lanes_.front() != lane) {
+            throw std::logic_error("request does not own the next staged prefill");
+        }
+        prefill_lanes_.pop_front();
+        prefill_lanes_.push_back(lane);
     }
 
     void clear_prefill_lane(std::uint32_t lane) {
-        if (!prefill_lane_ || *prefill_lane_ != lane) {
+        const auto it = std::find(prefill_lanes_.begin(), prefill_lanes_.end(), lane);
+        if (it == prefill_lanes_.end()) {
             throw std::logic_error("request does not own staged prefill");
         }
-        prefill_lane_.reset();
+        prefill_lanes_.erase(it);
     }
 
     void observe_fifo_head(std::optional<std::uint64_t> request_id) noexcept {
@@ -354,13 +380,13 @@ public:
     }
 
     void reset() noexcept {
-        prefill_lane_.reset();
+        prefill_lanes_.clear();
         fifo_head_id_.reset();
         protection_.reset();
     }
 
 private:
-    std::optional<std::uint32_t> prefill_lane_;
+    std::deque<std::uint32_t> prefill_lanes_;
     std::optional<std::uint64_t> fifo_head_id_;
     std::optional<AdmissionProtection> protection_;
     std::uint64_t next_protection_epoch_ = 1;

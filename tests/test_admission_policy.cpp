@@ -182,11 +182,20 @@ int main() {
                       "admission and GPU-unit fairness gates changed");
     scheduler.set_prefill_lane(0);
     failures +=
-        check(!scheduler.should_attempt_admission(true, true, true, true, false) &&
+        check(scheduler.should_attempt_admission(true, true, true, true, false) &&
                   scheduler.choose_execution(true, true, false) == ExecutionAction::Decode &&
                   scheduler.choose_execution(true, true, true) == ExecutionAction::Prefill,
-              "prefill/decode alternation changed");
+              "prefill admission/decode alternation changed");
+    scheduler.set_prefill_lane(1);
+    failures += check(scheduler.prefill_lane() == 0 && scheduler.has_prefill_lane(1),
+                      "multiple staged prefills were not retained");
+    scheduler.rotate_prefill_lane(0);
+    failures += check(scheduler.prefill_lane() == 1,
+                      "unfinished prefill did not yield to the next staged request");
     scheduler.clear_prefill_lane(0);
+    failures += check(scheduler.prefill_lane() == 1 && !scheduler.has_prefill_lane(0),
+                      "removing a non-front staged request corrupted prefill order");
+    scheduler.clear_prefill_lane(1);
 
     std::array<std::shared_ptr<SchedulerRequest>, ninfer::kMaximumConcurrency> slots{};
     slots[0]                      = std::make_shared<SchedulerRequest>();

@@ -1205,6 +1205,9 @@ private:
     }
 
     void remove_completed_slot(std::uint32_t lane) {
+        // Normal completions have already left the prefill queue.  Keep this defensive removal
+        // for an error/cancellation path that reaches terminal settlement while still staged.
+        if (scheduler_.has_prefill_lane(lane)) { scheduler_.clear_prefill_lane(lane); }
         slots_[lane].reset();
         request_admission_check();
     }
@@ -1283,7 +1286,7 @@ private:
             auto aborted = resources_.abort(*instance_.program, *request->lane, *request->sequence);
             request->generation_timings = aborted.timings;
             request->speculative_stats  = std::move(aborted.speculative);
-            if (scheduler_.prefill_lane() == lane) { scheduler_.clear_prefill_lane(lane); }
+            if (scheduler_.has_prefill_lane(lane)) { scheduler_.clear_prefill_lane(lane); }
             append_output(request, request->output.commit_preview());
             finish_engine_phase(boundary, EngineHostPhase::Boundary);
             complete_success(request, FinishReason::Cancelled);
@@ -1657,7 +1660,11 @@ private:
             progress.capture.reset();
             return;
         }
-        if (!progress.complete) { return; }
+        if (!progress.complete) {
+            if (!request->lane) { throw std::logic_error("unfinished prefill has no lane"); }
+            scheduler_.rotate_prefill_lane(request->lane->value);
+            return;
+        }
         if (!request->lane || !progress.pending) {
             throw std::logic_error("completed prefill has no lane or pending token");
         }
@@ -2301,11 +2308,19 @@ private:
                 membership = scheduler_.build_round_membership(slots_, max_concurrency_);
 
                 bool prefill_runnable = false;
-                if (const auto lane = scheduler_.prefill_lane(); lane) {
+                // A capture transaction can temporarily suspend one staged request.  Rotate it
+                // behind any other prefill work rather than allowing it to block every lane.
+                for (std::uint32_t inspected = 0; inspected < max_concurrency_; ++inspected) {
+                    const auto lane = scheduler_.prefill_lane();
+                    if (!lane) { break; }
                     if (slots_[*lane] == nullptr || !slots_[*lane]->is_prefilling()) {
                         throw std::logic_error("prefill owner has no active Engine request");
                     }
-                    prefill_runnable = !slots_[*lane]->capture_pending;
+                    if (!slots_[*lane]->capture_pending) {
+                        prefill_runnable = true;
+                        break;
+                    }
+                    scheduler_.rotate_prefill_lane(*lane);
                 }
                 const ExecutionAction action = scheduler_.choose_execution(
                     !membership.empty(), prefill_runnable, previous_unit_was_decode);
