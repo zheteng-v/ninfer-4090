@@ -242,6 +242,51 @@ seeds before changing artifact conversion or quantization.
 Raw reports are retained under
 `profiles/bench/acceptance-matrix/20261004-{greedy-depth,stochastic-128k,full-proposal-128k}/`.
 
+### SGLang versus NInfer long-code comparison (2026-10-04)
+
+The comparison client `tools/bench/run_sglang_long_context_code.py` renders the
+same NIAH document and terminal C++ scheduler task as the NInfer runner, then
+uses OpenAI-compatible loopback SSE to measure SGLang. Both engines prepared
+exactly 130,123 prompt tokens. All comparison points use greedy decoding,
+thinking disabled, a 1,024-token cap, no prefix reuse, and the RTX 4090 48 GiB.
+This is an operational comparison of the installed profiles, not an
+equal-weights kernel benchmark: SGLang uses Qwen3.8 W4A16-AWQ, FP8 DFlash2 draft
+and FP8 KV; NInfer uses its groupwise-int v3 artifact, INT8 KV and the listed
+speculative backend.
+
+| Workload | SGLang DFlash (8 drafts) | NInfer MTP3 | NInfer DFlash2 K=7 |
+| --- | ---: | ---: | ---: |
+| C=1 decode | 123.2 tok/s | 100.2 tok/s | **124.0 tok/s** |
+| C=1 external TTFT / internal prefill | **72.75 s** | 81.7 s | 82.1 s |
+| C=2 per-request decode | 100.0 / 96.6 tok/s | 91.3 / 82.2 tok/s* | 86.9 / 50.3 tok/s* |
+| C=2 simultaneous decode aggregate | **193.2 tok/s** | 143.5 tok/s* | 91.3 tok/s* |
+| C=2 TTFT | **74.95 / 74.89 s** | 163.28 / 162.19 s | 163.53 / 164.61 s |
+| C=2 observed GPU memory | 46,328 MiB | **32,256 MiB** deployed profile | about 32 GiB class |
+
+`*` The matched NInfer C=2 wave used the same request input but one of its two
+responses stopped naturally at 316 tokens. Its simultaneous aggregate is the
+server's complete one-second intervals with both decode lanes active, not the
+full-wave makespan. This is the valid decode-batch comparison, but it is a short
+sample and must be repeated with a multi-seed fixed-output corpus.
+
+SGLang batches the two cold long prefills: both requests reached their first
+token near 75 seconds. NInfer's fair scheduler prevents admission starvation,
+but it advances one 1,024-token prefill lane at a time; each request consumed
+about 81.6 seconds of compute prefill and both first tokens arrived near 163
+seconds. This prefill policy, more than decode kernel speed, is the decisive
+two-user interaction difference in this test.
+
+For the presently installed profiles, SGLang is the highest immediate
+two-concurrent-user throughput/TTFT option. NInfer DFlash2 is effectively tied
+with it for single-user decode while reserving much more VRAM headroom, and
+NInfer MTP3 remains the lower-memory dual route. Do not declare a quality winner
+yet: SGLang logged that its FP8 KV cache has no supplied scale factors and falls
+back to scale 1.0. Before making SGLang the production default, run a fixed
+correctness/retrieval and code-completion quality suite against both artifacts,
+then repeat C=2 with enough fixed requests to avoid EOS-length bias.
+
+Raw reports are under `profiles/bench/framework-comparison/20261004-{sglang-single-128k-greedy,sglang-dual-128k-greedy,ninfer-dual-128k-greedy}/`.
+
 ## Acceptance gates
 
 1. The long/short test shows the short request prefill begins before the long
