@@ -150,6 +150,50 @@ The runner must use `--cuda-visible-devices GPU-2f39017c-6cf6-5c22-6c8b-aff9ef65
 physical GPU 1. Binding its UUID creates the same logical-device mapping used by
 the production service.
 
+### Long-context code-generation result (2026-10-04)
+
+The short fixed-wave result above is **not** a prediction for a 128K coding
+session. To measure the workload that users actually see, the dedicated runner
+`tools/bench/run_serve_long_context_code.py` starts a clean server per point and
+submits the maintained long-NIAH document with its terminal instruction replaced
+by a C++17 fair-prefill scheduler implementation task. Each request contained
+130,159 prompt tokens, had a 2,048-token completion cap, used thinking mode,
+INT8 KV, a 1,024-token prefill chunk, and disabled prefix reuse. C=2 submitted
+two independently seeded requests concurrently; its KV capacity was 393,216.
+
+Raw immutable reports are under
+`profiles/bench/long-context-code/20261004-mtp3-dflash2-c1c2-128k/`. The
+following rates are server-recorded decode rates, so the roughly 80--164 seconds
+of long-context prefill are deliberately not counted as output tok/s.
+
+| Backend | C=1 actual decode | C=1 prefill / TTFT | C=2 request decode | C=2 simultaneous-decode aggregate | Speculative acceptance (C=1 / C=2 total) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MTP3 | 83.5 tok/s | 80.4 s / 80.5 s | 73.6 / 58.6 tok/s | **123.9 tok/s** | 50.7% / 37.7% |
+| DFlash2 K=7 | **110.2 tok/s** | 82.0 s / 82.1 s | 59.6 / 63.1 tok/s | 102.8 tok/s | 34.5% / 26.9% |
+
+The C=2 aggregate is the token-weighted mean of one-second server intervals in
+which both requests were decode-ready and no prefill was occurring (MTP3: 1,735
+tokens / 14.0 s; DFlash2: 1,644 / 16.0 s). It is the appropriate comparison for
+two users working concurrently. One request in each C=2 point emitted an EOS
+before the cap (MTP3 1,056 tokens, DFlash2 926), so its individual decode rate
+includes a tail where the other request continues alone; do not replace the
+simultaneous aggregate with the sum of those two per-request averages.
+
+This changes the operational conclusion by workload:
+
+- At this 130K coding context, DFlash2 is 31.9% faster for one user (110.2 vs
+  83.5 tok/s).
+- For two active users, MTP3 has 20.6% higher simultaneous aggregate decode
+  (123.9 vs 102.8 tok/s), while each user's own observed speed remains roughly
+  59--74 tok/s.
+- Full end-to-end completion throughput is only 15--20 tok/s because it includes
+  the unavoidable cold 130K prefill. It must never be reported as decode tok/s.
+
+The production MTP3 dual profile remains justified for concurrent work. DFlash2
+is the preferred candidate for a single long-context coding profile, subject to
+at least two additional seeded repetitions before a default is changed; token
+acceptance and EOS length are sampling-sensitive.
+
 ## Acceptance gates
 
 1. The long/short test shows the short request prefill begins before the long
