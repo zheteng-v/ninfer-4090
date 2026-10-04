@@ -13,6 +13,7 @@ import argparse
 import concurrent.futures
 import http.client
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -38,6 +39,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=24562)
     parser.add_argument("--device", type=int, default=0)
+    parser.add_argument(
+        "--cuda-visible-devices",
+        help=("optional CUDA_VISIBLE_DEVICES value; with one selected GPU it is logical "
+              "--device 0"),
+    )
     parser.add_argument("--max-context", type=int, default=196608)
     parser.add_argument("--kv-capacity", type=int, default=393216)
     parser.add_argument("--prefill-chunk", type=int, default=1024)
@@ -66,6 +72,15 @@ def server_command(args: argparse.Namespace, request_log: Path) -> list[str]:
         "--kv-dtype", "int8", "--no-prefix-reuse", "--greedy", "--spec", backend,
         "--draft-tokens", str(drafts), "--lm-head-draft",
     ]
+
+
+def server_environment(args: argparse.Namespace) -> dict[str, str] | None:
+    if not args.cuda_visible_devices:
+        return None
+    environment = os.environ.copy()
+    environment["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    environment["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+    return environment
 
 
 def request(port: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -105,6 +120,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     require(args.serve.is_file(), f"serve executable not found: {args.serve}")
     require(args.artifact.is_file(), f"artifact not found: {args.artifact}")
     require(args.port > 0 and args.port < 65536, "--port must be in [1,65535]")
+    require(not args.cuda_visible_devices or args.device == 0,
+            "--device must be 0 when --cuda-visible-devices selects one GPU")
     require(args.max_context > 0 and args.kv_capacity >= args.max_context,
             "--kv-capacity must be at least --max-context")
     require(args.prefill_chunk > 0 and args.prefill_chunk % 128 == 0,
@@ -143,7 +160,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     long_payload["max_completion_tokens"] = args.max_tokens
     short_payload["max_completion_tokens"] = args.max_tokens
 
-    with corpus.RunningServer(command, "127.0.0.1", args.port, request_log) as server:
+    with corpus.RunningServer(
+        command, "127.0.0.1", args.port, request_log, server_environment(args)
+    ) as server:
         start = server.wait_until_ready()
         instance_id = str(start["server_instance_id"])
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:

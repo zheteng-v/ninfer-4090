@@ -158,6 +158,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
     parser.add_argument("--device", type=int, default=0, help="CUDA device index")
     parser.add_argument(
+        "--cuda-visible-devices",
+        help=("optional CUDA_VISIBLE_DEVICES value (for example a GPU UUID); when set, "
+              "the selected GPU is exposed as logical --device 0"),
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="print point commands and request counts only"
     )
     return parser.parse_args(argv)
@@ -168,6 +173,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise corpus.CampaignError("--port must be in [1, 65535]")
     if args.device < 0:
         raise corpus.CampaignError("--device must be nonnegative")
+    if args.cuda_visible_devices and args.device != 0:
+        raise corpus.CampaignError(
+            "--device must be 0 when --cuda-visible-devices restricts the process to one GPU"
+        )
     if args.max_context <= 0:
         raise corpus.CampaignError("--max-context must be positive")
     if args.decode_tokens <= 0:
@@ -230,6 +239,15 @@ def resolved_kv_capacity(point: Point, args: argparse.Namespace) -> str:
     if args.kv_capacity == "per-concurrency":
         return str(args.max_context * point.concurrency)
     return args.kv_capacity
+
+
+def server_environment(args: argparse.Namespace) -> dict[str, str] | None:
+    if not args.cuda_visible_devices:
+        return None
+    environment = os.environ.copy()
+    environment["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    environment["CUDA_VISIBLE_DEVICES"] = args.cuda_visible_devices
+    return environment
 
 
 def build_jobs(
@@ -795,7 +813,9 @@ def run_point(
         flush=True,
     )
 
-    with corpus.RunningServer(command, "127.0.0.1", args.port, server_log) as server:
+    with corpus.RunningServer(
+        command, "127.0.0.1", args.port, server_log, server_environment(args)
+    ) as server:
         server_start = server.wait_until_ready()
         server_instance_id, prefill_signature = validate_server_start(server_start, point, args)
         if point.suite == "corpus-makespan" and point.concurrency == 1:

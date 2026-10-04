@@ -77,7 +77,8 @@ python3 tools/bench/run_serve_concurrency.py \
   --concurrency 1 --concurrency 2 \
   --sampling greedy --decode-tokens 1024 \
   --max-context 196608 --kv-capacity per-concurrency --prefill-chunk 1024 \
-  --kv-dtype int8 --port 24562 \
+  --kv-dtype int8 --port 24562 --device 0 \
+  --cuda-visible-devices GPU-2f39017c-6cf6-5c22-6c8b-aff9ef65a4bd \
   --output profiles/bench/rtx4090-concurrency/<timestamp>
 ```
 
@@ -126,6 +127,28 @@ MTP3 is therefore the deployed dual-request default. DFlash2 was slightly faster
 in this single-request sample, but did not produce a two-request aggregation gain.
 The next corpus campaign must confirm whether that pattern holds across coding,
 long-context and tool-use requests before any route policy is made permanent.
+
+### Reproducible fixed-wave saturation result
+
+The benchmark runner was subsequently run on the same RTX 4090 with its GPU UUID
+explicitly bound, an 8192-token context, INT8 KV, greedy decoding, prefix reuse
+disabled, and the fixed `long_decode_aime26_15` prompt. The MTP3 point used a
+256-token output budget; DFlash2 used 512 tokens so that both its C=1 and C=2
+points contained complete one-second steady-state intervals. Consequently compare
+the **within-backend speedup**, not the absolute values between the two rows.
+
+| Backend | C=1 steady decode | C=2 steady decode | C=2 batch | Within-backend speedup |
+| --- | ---: | ---: | ---: | ---: |
+| MTP3 | 127.0 tok/s | 255.0 tok/s | 2.00 | **2.01×** |
+| DFlash2 K=7 | 148.0 tok/s | 161.4 tok/s | 2.00 | 1.09× |
+
+The raw artifacts are retained under
+`profiles/bench/rtx4090-concurrency/20261004-fixed-c1c2-8k-uuid/` (MTP3) and
+`profiles/bench/rtx4090-concurrency/20261004-dflash-c1c2-8k-uuid/` (DFlash2).
+The runner must use `--cuda-visible-devices GPU-2f39017c-6cf6-5c22-6c8b-aff9ef65a4bd
+--device 0` on this host: physical GPU 0 is the 5060 Ti, while the RTX 4090 is
+physical GPU 1. Binding its UUID creates the same logical-device mapping used by
+the production service.
 
 ## Acceptance gates
 

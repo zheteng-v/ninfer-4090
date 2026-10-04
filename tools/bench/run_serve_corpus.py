@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
@@ -197,17 +197,19 @@ class RunningServer:
         host: str,
         port: int,
         log_path: Path,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self.command = list(command)
         self.host = host
         self.port = port
         self.log_path = log_path
+        self.environment = dict(environment) if environment is not None else None
         self.process: subprocess.Popen[bytes] | None = None
         self.tail: ServerLogTail | None = None
 
     def __enter__(self) -> "RunningServer":
         initial_offset = self.log_path.stat().st_size if self.log_path.exists() else 0
-        self.process = subprocess.Popen(self.command, cwd=REPO_ROOT)
+        self.process = subprocess.Popen(self.command, cwd=REPO_ROOT, env=self.environment)
         self.tail = ServerLogTail(self.log_path, self.process, initial_offset)
         return self
 
