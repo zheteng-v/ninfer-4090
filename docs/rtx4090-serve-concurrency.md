@@ -76,10 +76,14 @@ python3 tools/bench/run_serve_concurrency.py \
   --suite decode-saturation \
   --concurrency 1 --concurrency 2 \
   --sampling greedy --decode-tokens 1024 \
-  --max-context 196608 --kv-capacity 393216 --prefill-chunk 1024 \
+  --max-context 196608 --kv-capacity per-concurrency --prefill-chunk 1024 \
   --kv-dtype int8 --port 24562 \
   --output profiles/bench/rtx4090-concurrency/<timestamp>
 ```
+
+`per-concurrency` resolves KV capacity to 196608 at C=1 and 393216 at C=2. This
+is necessary because a C=1 server cannot legally reserve 393216 tokens, while a
+full C=2 long-context point needs that capacity.
 
 The experiment writes immutable command provenance, per-request JSONL, TTFT,
 queue delay, decode batch size, aggregate decode tok/s, and speculative acceptance.

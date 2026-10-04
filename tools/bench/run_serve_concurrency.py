@@ -143,8 +143,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--kv-capacity",
         default="262144",
-        metavar="N|auto",
-        help="shared Main KV capacity passed to ninfer-serve (default: 262144)",
+        metavar="N|auto|per-concurrency",
+        help=("shared Main KV capacity; per-concurrency resolves to max-context × C for each "
+              "point (default: 262144)"),
     )
     parser.add_argument("--prefill-chunk", type=int, default=1024)
     parser.add_argument(
@@ -173,9 +174,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise corpus.CampaignError("--decode-tokens must be positive")
     if args.prefill_chunk <= 0 or args.prefill_chunk % 128 != 0:
         raise corpus.CampaignError("--prefill-chunk must be a positive multiple of 128")
-    if args.kv_capacity != "auto":
+    if args.kv_capacity not in {"auto", "per-concurrency"}:
         if not args.kv_capacity.isdigit() or int(args.kv_capacity) <= 0:
-            raise corpus.CampaignError("--kv-capacity must be a positive integer or auto")
+            raise corpus.CampaignError(
+                "--kv-capacity must be a positive integer, auto, or per-concurrency"
+            )
         if int(args.kv_capacity) < args.max_context:
             raise corpus.CampaignError("--kv-capacity must be at least --max-context")
     if len(args.concurrency) != len(set(args.concurrency)):
@@ -214,6 +217,19 @@ def build_points(
                         )
                     )
     return points
+
+
+def resolved_kv_capacity(point: Point, args: argparse.Namespace) -> str:
+    """Return a capacity legal for the particular server concurrency point.
+
+    NInfer limits explicit Main-KV capacity to `max_context * max_concurrency`.
+    A single fixed capacity therefore cannot represent both a C=1 and a full-C=2
+    long-context point.  The explicit per-concurrency form preserves each point's
+    intended maximum resident context without relying on automatic sizing.
+    """
+    if args.kv_capacity == "per-concurrency":
+        return str(args.max_context * point.concurrency)
+    return args.kv_capacity
 
 
 def build_jobs(
@@ -295,7 +311,7 @@ def server_command(
         "--max-context",
         str(args.max_context),
         "--kv-capacity",
-        args.kv_capacity,
+        resolved_kv_capacity(point, args),
         "--max-concurrency",
         str(point.concurrency),
         "--max-pending-requests",
