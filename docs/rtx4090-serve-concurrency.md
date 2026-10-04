@@ -194,6 +194,54 @@ is the preferred candidate for a single long-context coding profile, subject to
 at least two additional seeded repetitions before a default is changed; token
 acceptance and EOS length are sampling-sensitive.
 
+### Acceptance diagnosis matrix (2026-10-04)
+
+The long-code runner was extended with explicit fixture depth, greedy/stochastic
+sampling, MTP0, MTP3, DFlash2, and proposal-head selection. This separates a
+proposal-quality problem from normal context-depth and sampling effects. All rows
+below use the same terminal C++ scheduler task, a 1,024-token completion cap,
+thinking disabled, INT8 KV, no prefix reuse, one lane, and the optimized proposal
+head. Each point is one fixed-seed clean-server run; these are diagnosis points,
+not a variance estimate.
+
+| Prompt depth | MTP0 (no spec) | MTP3 decode / acceptance | DFlash2 K=7 decode / acceptance |
+| --- | ---: | ---: | ---: |
+| 7,755 tokens | 51.5 tok/s | 124.9 tok/s / 63.7% | **162.0 tok/s / 42.9%** |
+| 64,587 tokens | 45.6 tok/s | 111.1 tok/s / 65.9% | **129.3 tok/s / 37.4%** |
+| 130,123 tokens | 40.9 tok/s | 100.2 tok/s / 67.6% | **124.0 tok/s / 40.9%** |
+
+The lower DFlash2 acceptance is not evidence by itself of inferior weights: it
+proposes seven tokens per round whereas MTP3 proposes three. On this exact task
+DFlash2 is faster at every depth despite that percentage. At 130K, MTP3 and
+DFlash2 respectively produce 2.45x and 3.03x the no-spec decode baseline.
+
+At the same 130K depth, changing only the server sampling profile produced:
+
+| Backend | Greedy decode / acceptance | Temperature 1.0, top-p .95 decode / acceptance |
+| --- | ---: | ---: |
+| MTP3 | 100.2 tok/s / 67.6% | 91.1 tok/s / 58.4% |
+| DFlash2 K=7 | 124.0 tok/s / 40.9% | 116.4 tok/s / 37.4% |
+
+Thus stochastic sampling accounts for a material part of the observed acceptance
+loss (9.2 percentage points for MTP3 here), but does not explain all content and
+depth variation. The optimized-head control also supports retaining the deployed
+`--lm-head-draft` setting:
+
+| Backend at 130K, greedy | Optimized head | Full head |
+| --- | ---: | ---: |
+| MTP3 | **100.2 tok/s / 67.6%** | 92.5 tok/s / 68.8% |
+| DFlash2 K=7 | **124.0 tok/s / 40.9%** | 120.6 tok/s / 41.1% |
+
+The full head gains at most 1.2 acceptance points while losing 2.8--7.7% decode
+rate. This rejects a simple local proposal-head precision/configuration fault; it
+does not prove that the imported MTP or DFlash2 companion weights are globally
+optimal. A future artifact audit must compare target/proposal logits against the
+source checkpoint on fixed token prefixes, then repeat the matrix across multiple
+seeds before changing artifact conversion or quantization.
+
+Raw reports are retained under
+`profiles/bench/acceptance-matrix/20261004-{greedy-depth,stochastic-128k,full-proposal-128k}/`.
+
 ## Acceptance gates
 
 1. The long/short test shows the short request prefill begins before the long
